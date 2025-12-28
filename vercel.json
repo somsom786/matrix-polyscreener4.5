@@ -1,0 +1,39 @@
+{
+    "rewrites": [
+        {
+            "source": "/api/gamma/:path*",
+            "destination": "https://gamma-api.polymarket.com/:path*"
+        },
+        {
+            "source": "/api/clob/:path*",
+            "destination": "https://clob.polymarket.com/:path*"
+        },
+        {
+            "source": "/api/data/:path*",
+            "destination": "https://data-api.polymarket.com/:path*"
+        },
+        {
+            "source": "/((?!api/).*)",
+            "destination": "/index.html"
+        }
+    ],
+    "headers": [
+        {
+            "source": "/api/(.*)",
+            "headers": [
+                {
+                    "key": "Access-Control-Allow-Origin",
+                    "value": "*"
+                },
+                {
+                    "key": "Access-Control-Allow-Methods",
+                    "value": "GET, POST, PUT, DELETE, OPTIONS"
+                },
+                {
+                    "key": "Access-Control-Allow-Headers",
+                    "value": "Content-Type, Authorization"
+                }
+            ]
+        }
+    ]
+}
