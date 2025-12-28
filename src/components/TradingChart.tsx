@@ -1,162 +1,301 @@
-import { useMemo } from 'react'
-import { AreaChart, Area, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Bar } from 'recharts'
+import { useEffect, useRef, useState } from 'react';
 
-interface TradingChartProps {
-    height?: number
+// Types for props
+interface ChartProps {
+    data: {
+        time: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+    }[];
+    colors?: {
+        backgroundColor?: string;
+        lineColor?: string;
+        textColor?: string;
+    };
+    height?: number;
+    markers?: { time: number; position: 'aboveBar' | 'belowBar'; color: string; shape: 'arrowDown' | 'arrowUp'; text: string }[];
 }
 
-// Generate mock OHLC data
-function generateOHLCData(days: number = 60) {
-    const data: { time: string; open: number; high: number; low: number; close: number; volume: number; sma7: number; sma21: number }[] = []
-    let price = 50 + Math.random() * 20
-    const prices: number[] = []
-    const now = Date.now()
+export function TradingChart(props: ChartProps) {
+    const {
+        data,
+        colors: {
+            backgroundColor = 'transparent',
+            textColor = '#64748b',
+        } = {},
+        height = 400,
+        markers = []
+    } = props;
 
-    for (let i = days; i >= 0; i--) {
-        const date = new Date(now - i * 24 * 60 * 60 * 1000)
-        const volatility = 2 + Math.random() * 3
-        const open = price
-        const close = open + (Math.random() - 0.48) * volatility
-        const high = Math.max(open, close) + Math.random() * volatility * 0.5
-        const low = Math.min(open, close) - Math.random() * volatility * 0.5
+    const chartContainerRef = useRef<HTMLDivElement>(null);
+    const chartRef = useRef<any>(null);
+    const candlestickSeriesRef = useRef<any>(null);
 
-        price = Math.max(5, Math.min(95, close))
-        prices.push(price)
+    const [isLoading, setIsLoading] = useState(true);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-        // Calculate SMAs
-        let sma7 = price
-        let sma21 = price
-        if (prices.length >= 7) {
-            sma7 = prices.slice(-7).reduce((a, b) => a + b, 0) / 7
+    useEffect(() => {
+        if (!chartContainerRef.current) return;
+
+        let chartApi: any = null;
+
+        const initChart = async () => {
+            try {
+                // Dynamic import to prevent build/init crashes
+                const module = await import('lightweight-charts');
+                const createChart = module.createChart || module.default?.createChart;
+                const ColorType = module.ColorType || module.default?.ColorType;
+                const CandlestickSeries = module.CandlestickSeries || module.default?.CandlestickSeries;
+
+                if (!createChart) {
+                    throw new Error('Could not find createChart in module');
+                }
+
+                setIsLoading(false);
+
+                if (!chartContainerRef.current) return;
+
+                const chart = createChart(chartContainerRef.current, {
+                    layout: {
+                        background: { type: ColorType.Solid, color: backgroundColor },
+                        textColor,
+                    },
+                    width: chartContainerRef.current.clientWidth,
+                    height: height,
+                    grid: {
+                        vertLines: { color: 'rgba(42, 46, 57, 0.15)' },
+                        horzLines: { color: 'rgba(42, 46, 57, 0.15)' },
+                    },
+                    rightPriceScale: {
+                        scaleMargins: {
+                            top: 0.1,
+                            bottom: 0.1,
+                        },
+                        // Format as percentage
+                        visible: true,
+                    },
+                    timeScale: {
+                        timeVisible: true,
+                        secondsVisible: false,
+                        borderColor: 'rgba(42, 46, 57, 0.3)',
+                    },
+                    crosshair: {
+                        vertLine: {
+                            color: 'rgba(100, 204, 150, 0.4)',
+                            width: 1,
+                            style: 2,
+                        },
+                        horzLine: {
+                            color: 'rgba(100, 204, 150, 0.4)',
+                            width: 1,
+                            style: 2,
+                        },
+                    },
+                    handleScroll: true,
+                    handleScale: true,
+                });
+
+                chartRef.current = chart;
+                chartApi = chart;
+
+                let candlestickSeries;
+                const seriesOptions = {
+                    upColor: '#22c55e',
+                    downColor: '#ef4444',
+                    borderVisible: false,
+                    wickUpColor: '#22c55e',
+                    wickDownColor: '#ef4444',
+                    // Price format as percentage
+                    priceFormat: {
+                        type: 'custom',
+                        formatter: (price: number) => `${(price * 100).toFixed(1)}%`,
+                        minMove: 0.001,
+                    },
+                };
+
+                // Check for v4 API
+                if (typeof chart.addCandlestickSeries === 'function') {
+                    candlestickSeries = chart.addCandlestickSeries(seriesOptions);
+                }
+                // Check for v5 API
+                else if (typeof chart.addSeries === 'function' && CandlestickSeries) {
+                    candlestickSeries = chart.addSeries(CandlestickSeries, seriesOptions);
+                } else {
+                    throw new Error('Chart API incompatibility: Could not add candlestick series.');
+                }
+
+                candlestickSeriesRef.current = candlestickSeries;
+
+                // Apply price scale options for 0-100% range
+                candlestickSeries.applyOptions({
+                    priceScaleId: 'right',
+                });
+
+                // Set visible range (0 to 1 = 0% to 100%)
+                try {
+                    chart.priceScale('right').applyOptions({
+                        autoScale: true,
+                    });
+                } catch (e) {
+                    // Ignore if method not available
+                }
+
+                // Initial data if available
+                if (data.length > 0) {
+                    // Sort and normalize data (values should be 0-1 for probability)
+                    const sortedData = [...data]
+                        .sort((a, b) => a.time - b.time)
+                        .map(d => ({
+                            time: d.time,
+                            open: Math.max(0, Math.min(1, d.open)),
+                            high: Math.max(0, Math.min(1, d.high)),
+                            low: Math.max(0, Math.min(1, d.low)),
+                            close: Math.max(0, Math.min(1, d.close)),
+                        }));
+                    candlestickSeries.setData(sortedData);
+                    chart.timeScale().fitContent();
+                }
+
+                // Initial markers
+                if (markers.length > 0) {
+                    candlestickSeries.setMarkers(markers);
+                }
+
+            } catch (err: any) {
+                console.error('Failed to load chart:', err);
+                setErrorMsg(err.message || 'Unknown error loading chart');
+                setIsLoading(false);
+            }
+        };
+
+        if (isLoading && !chartRef.current) {
+            initChart();
         }
-        if (prices.length >= 21) {
-            sma21 = prices.slice(-21).reduce((a, b) => a + b, 0) / 21
+
+        const handleResize = () => {
+            if (chartRef.current && chartContainerRef.current) {
+                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
+            }
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            window.removeEventListener('resize', handleResize);
+            if (chartApi) {
+                chartApi.remove();
+                chartRef.current = null;
+            }
+        };
+    }, [isLoading]);
+
+    // Update data effect
+    useEffect(() => {
+        if (candlestickSeriesRef.current && data.length > 0) {
+            // Sort and normalize data
+            const sortedData = [...data]
+                .sort((a, b) => a.time - b.time)
+                .map(d => ({
+                    time: d.time,
+                    open: Math.max(0, Math.min(1, d.open)),
+                    high: Math.max(0, Math.min(1, d.high)),
+                    low: Math.max(0, Math.min(1, d.low)),
+                    close: Math.max(0, Math.min(1, d.close)),
+                }));
+            candlestickSeriesRef.current.setData(sortedData);
+
+            // Fit content to show all data
+            if (chartRef.current) {
+                chartRef.current.timeScale().fitContent();
+            }
         }
+    }, [data]);
 
-        data.push({
-            time: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            open: Math.round(Math.max(5, Math.min(95, open)) * 10) / 10,
-            high: Math.round(Math.max(5, Math.min(95, high)) * 10) / 10,
-            low: Math.round(Math.max(5, Math.min(95, low)) * 10) / 10,
-            close: Math.round(price * 10) / 10,
-            volume: Math.floor(Math.random() * 100000) + 10000,
-            sma7: Math.round(sma7 * 10) / 10,
-            sma21: Math.round(sma21 * 10) / 10,
-        })
-    }
-    return data
-}
+    // Update markers effect
+    useEffect(() => {
+        if (candlestickSeriesRef.current && markers.length > 0) {
+            candlestickSeriesRef.current.setMarkers(markers);
+        }
+    }, [markers]);
 
-export function TradingChart({ height = 400 }: TradingChartProps) {
-    const data = useMemo(() => generateOHLCData(60), [])
-
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Main Price Chart */}
-            <ResponsiveContainer width="100%" height={height - 100}>
-                <ComposedChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                        <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
-                        </linearGradient>
-                    </defs>
-                    <XAxis
-                        dataKey="time"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#64748b', fontSize: 10 }}
-                        interval="preserveStartEnd"
-                    />
-                    <YAxis
-                        domain={['auto', 'auto']}
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#64748b', fontSize: 10 }}
-                        tickFormatter={(v) => `${v}%`}
-                        width={45}
-                    />
-                    <Tooltip
-                        contentStyle={{
-                            background: 'rgba(15, 23, 42, 0.95)',
-                            border: '1px solid rgba(148, 163, 184, 0.2)',
-                            borderRadius: 8,
-                            fontSize: 12,
-                        }}
-                        labelStyle={{ color: '#94a3b8' }}
-                        formatter={(value: number, name: string) => {
-                            const label = name === 'close' ? 'Price' : name === 'sma7' ? 'SMA(7)' : name === 'sma21' ? 'SMA(21)' : name
-                            return [`${value}%`, label]
-                        }}
-                    />
-
-                    {/* Price Area */}
-                    <Area
-                        type="monotone"
-                        dataKey="close"
-                        stroke="#8b5cf6"
-                        strokeWidth={2}
-                        fillOpacity={1}
-                        fill="url(#priceGradient)"
-                    />
-
-                    {/* SMA 7 */}
-                    <Line
-                        type="monotone"
-                        dataKey="sma7"
-                        stroke="#4ade80"
-                        strokeWidth={1.5}
-                        dot={false}
-                        strokeDasharray="4 2"
-                    />
-
-                    {/* SMA 21 */}
-                    <Line
-                        type="monotone"
-                        dataKey="sma21"
-                        stroke="#f472b6"
-                        strokeWidth={1.5}
-                        dot={false}
-                        strokeDasharray="4 2"
-                    />
-                </ComposedChart>
-            </ResponsiveContainer>
-
-            {/* Volume Chart */}
-            <ResponsiveContainer width="100%" height={80}>
-                <ComposedChart data={data} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
-                    <XAxis dataKey="time" hide />
-                    <YAxis hide />
-                    <Bar
-                        dataKey="volume"
-                        fill="#22d3ee"
-                        fillOpacity={0.4}
-                        radius={[2, 2, 0, 0]}
-                    />
-                </ComposedChart>
-            </ResponsiveContainer>
-
-            {/* Legend */}
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 24, fontSize: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 16, height: 2, background: '#8b5cf6' }} />
-                    <span style={{ color: 'var(--text-secondary)' }}>Price</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 16, height: 2, background: '#4ade80', borderTop: '2px dashed #4ade80' }} />
-                    <span style={{ color: 'var(--text-secondary)' }}>SMA(7)</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 16, height: 2, background: '#f472b6', borderTop: '2px dashed #f472b6' }} />
-                    <span style={{ color: 'var(--text-secondary)' }}>SMA(21)</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <div style={{ width: 16, height: 8, background: 'rgba(34, 211, 238, 0.4)', borderRadius: 2 }} />
-                    <span style={{ color: 'var(--text-secondary)' }}>Volume</span>
+    return <div ref={chartContainerRef} style={{ width: '100%', height: height, position: 'relative' }}>
+        {isLoading && (
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#64748b',
+                background: 'rgba(0,0,0,0.3)'
+            }}>
+                <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 8
+                }}>
+                    <div style={{
+                        width: 24,
+                        height: 24,
+                        border: '2px solid rgba(100,100,100,0.3)',
+                        borderTopColor: 'var(--accent-primary)',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite'
+                    }} />
+                    <span style={{ fontSize: 11 }}>Loading Chart...</span>
                 </div>
             </div>
-        </div>
-    )
+        )}
+        {errorMsg && (
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#ef4444',
+                textAlign: 'center',
+                padding: 20,
+                background: 'rgba(0,0,0,0.5)'
+            }}>
+                <div style={{ fontSize: 13, marginBottom: 4 }}>Failed to load chart</div>
+                <div style={{ fontSize: 10, opacity: 0.7 }}>{errorMsg}</div>
+                <button
+                    onClick={() => window.location.reload()}
+                    style={{
+                        marginTop: 12,
+                        padding: '6px 12px',
+                        background: 'var(--accent-danger)',
+                        border: 'none',
+                        borderRadius: 4,
+                        color: 'white',
+                        cursor: 'pointer',
+                        fontSize: 11
+                    }}
+                >
+                    Refresh Page
+                </button>
+            </div>
+        )}
+        {!isLoading && !errorMsg && data.length === 0 && (
+            <div style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#64748b',
+                pointerEvents: 'none',
+                fontSize: 12
+            }}>
+                No chart data available
+            </div>
+        )}
+    </div>;
 }
 
-export default TradingChart
+export default TradingChart;

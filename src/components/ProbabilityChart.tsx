@@ -60,7 +60,7 @@ export function ProbabilityChart({ data, color = '#4ade80', height = 300 }: Prob
                         boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
                     }}
                     labelStyle={{ color: '#94a3b8', marginBottom: 4 }}
-                    formatter={(value: number) => [`${value}%`, 'Probability']}
+                    formatter={(value: number | undefined) => [`${(value || 0)}%`, 'Probability']}
                 />
                 <Area
                     type="monotone"

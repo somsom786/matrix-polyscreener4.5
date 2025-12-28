@@ -2,8 +2,46 @@ import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { fetchMarket, getSmartWalletsForMarket, SMART_WALLETS, fetchMarketTrades, fetchAllMarketHolders } from '../services/polymarket'
 import type { Market, SmartWalletPosition, MarketTrade, MarketHolder } from '../services/polymarket'
-import ProbabilityChart from '../components/ProbabilityChart'
+import { fetchOrderBook, fetchPriceHistory } from '../services/polymarket'
+import TradingChart from '../components/TradingChart'
+import { ProbabilityChart } from '../components/ProbabilityChart'
 import TraderModal from '../components/TraderModal'
+import { OrderBook } from '../components/OrderBook'
+import { TraderHoverCard } from '../components/TraderHoverCard'
+
+// Timeframe intervals in seconds
+const TIMEFRAME_INTERVALS: Record<string, number> = {
+    '1h': 60,         // 1 minute intervals for 1 hour view
+    '6h': 360,        // 6 minute intervals for 6 hour view
+    '1d': 1440,       // 24 minute intervals for 1 day view
+    '1w': 10080,      // ~2.8 hour intervals for 1 week view
+    '1m': 43200,      // 12 hour intervals for 1 month view
+    'all': 86400,     // 1 day intervals for all time
+}
+
+// Generate mock OHLC data when API returns empty (values in 0-1 range for probability)
+function generateMockChartData(currentPrice: number = 0.5, timeframe: string = '1h'): Array<{ time: number; open: number; high: number; low: number; close: number }> {
+    const data = [];
+    // Convert currentPrice from percentage (0-100) to probability (0-1) if needed
+    let price = currentPrice > 1 ? currentPrice / 100 : currentPrice;
+    const now = Math.floor(Date.now() / 1000);
+    const interval = TIMEFRAME_INTERVALS[timeframe] || 3600;
+    const numPoints = 100;
+
+    for (let i = numPoints; i >= 0; i--) {
+        const time = now - i * interval;
+        const open = price;
+        // Smaller volatility for probability values (0-1 range)
+        const change = (Math.random() - 0.48) * 0.03;
+        price = Math.max(0.05, Math.min(0.95, price + change));
+        const close = price;
+        const high = Math.min(1, Math.max(open, close) + Math.random() * 0.02);
+        const low = Math.max(0, Math.min(open, close) - Math.random() * 0.02);
+
+        data.push({ time, open, high, low, close });
+    }
+    return data;
+}
 
 interface TraderForModal {
     rank: number
@@ -61,10 +99,16 @@ export default function MarketPage() {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [copied, setCopied] = useState<string | null>(null)
     const [activeTab, setActiveTab] = useState<'activity' | 'traders' | 'holders'>('traders')
+    const [timeframe, setTimeframe] = useState('1h')
+    const [chartMode, setChartMode] = useState<'probability' | 'candlestick'>('probability')
+    const [chartData, setChartData] = useState<any[]>([])
+    const [pinnedWallet, setPinnedWallet] = useState<string>('')
+    const [chartMarkers, setChartMarkers] = useState<any[]>([])
 
     // NEW: Real market data from API
     const [marketTrades, setMarketTrades] = useState<MarketTrade[]>([])
     const [allHolders, setAllHolders] = useState<MarketHolder[]>([])
+    const [orderBook, setOrderBook] = useState<{ bids: any[], asks: any[] }>({ bids: [], asks: [] })
 
     useEffect(() => {
         async function loadMarket() {
@@ -84,6 +128,25 @@ export default function MarketPage() {
                         fetchAllMarketHolders(conditionId, 100),
                     ])
 
+                    // Fetch Order Book if token ID is available (YES outcome usually index 0 or 1 depending on market)
+                    // For now, try the first token ID
+                    if (data.clobTokenIds && data.clobTokenIds.length > 0) {
+                        fetchOrderBook(data.clobTokenIds[0]).then(book => {
+                            console.log('Order Book loaded:', book.bids.length, 'bids')
+                            setOrderBook(book)
+                        })
+                        // Initial chart fetch with fallback
+                        fetchPriceHistory(data.clobTokenIds[0], timeframe).then(result => {
+                            if (result.length === 0) {
+                                // Use mock data as fallback
+                                const yesPrice = parsePrice(data.outcomePrices);
+                                setChartData(generateMockChartData(yesPrice));
+                            } else {
+                                setChartData(result);
+                            }
+                        })
+                    }
+
                     setSmartWallets(wallets)
                     setMarketTrades(trades)
                     setAllHolders(holders)
@@ -98,6 +161,44 @@ export default function MarketPage() {
         }
         loadMarket()
     }, [id])
+
+    // Fetch chart data when timeframe changes
+    useEffect(() => {
+        if (market?.clobTokenIds?.[0]) {
+            const yesPrice = parsePrice(market.outcomePrices);
+            fetchPriceHistory(market.clobTokenIds[0], timeframe).then(result => {
+                if (result.length === 0) {
+                    // Use mock data as fallback with proper 0-1 scale
+                    setChartData(generateMockChartData(yesPrice, timeframe));
+                } else {
+                    setChartData(result);
+                }
+            });
+        } else if (market) {
+            // Generate mock data even without token ID
+            const yesPrice = parsePrice(market.outcomePrices);
+            setChartData(generateMockChartData(yesPrice, timeframe));
+        }
+    }, [timeframe, market])
+
+    useEffect(() => {
+        if (!pinnedWallet || marketTrades.length === 0) {
+            setChartMarkers([])
+            return
+        }
+
+        const markers = marketTrades
+            .filter(t => t.user.toLowerCase() === pinnedWallet.toLowerCase())
+            .map(t => ({
+                time: t.timestamp / 1000, // lightweight-charts uses seconds
+                position: t.side === 'BUY' ? 'belowBar' : 'aboveBar',
+                color: t.side === 'BUY' ? '#22c55e' : '#ef4444',
+                shape: t.side === 'BUY' ? 'arrowUp' : 'arrowDown',
+                text: t.side === 'BUY' ? 'B' : 'S',
+            }))
+
+        setChartMarkers(markers)
+    }, [pinnedWallet, marketTrades])
 
     const handleCopy = async (address: string) => {
         await navigator.clipboard.writeText(address)
@@ -256,7 +357,7 @@ export default function MarketPage() {
                         </div>
                         <div className="glow-border" style={{ padding: 16, textAlign: 'center' }}>
                             <div style={{ fontSize: 11, color: 'var(--matrix-text-muted)', marginBottom: 4 }}>VOLUME</div>
-                            <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--matrix-text)' }}>{formatNumber(volume)}</div>
+                            <div style={{ fontSize: 20, fontWeight: 600, color: 'var(--accent-highlight)' }}>{formatNumber(volume)}</div>
                         </div>
                         <div className="glow-border" style={{ padding: 16, textAlign: 'center' }}>
                             <div style={{ fontSize: 11, color: 'var(--matrix-text-muted)', marginBottom: 4 }}>LIQUIDITY</div>
@@ -266,10 +367,80 @@ export default function MarketPage() {
 
                     {/* Chart */}
                     <div className="matrix-panel" style={{ marginBottom: 24 }}>
-                        <div className="matrix-panel-header">
-                            <span>PROBABILITY_CHART</span>
+                        <div className="matrix-panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            {/* Chart Mode Toggle */}
+                            <div style={{ display: 'flex', gap: 8 }}>
+                                <button
+                                    onClick={() => setChartMode('probability')}
+                                    style={{
+                                        background: chartMode === 'probability' ? 'var(--accent-primary)' : 'transparent',
+                                        color: chartMode === 'probability' ? 'var(--bg-primary)' : 'var(--text-muted)',
+                                        border: '1px solid var(--border-default)',
+                                        borderRadius: 4,
+                                        padding: '4px 12px',
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    📈 Probability
+                                </button>
+                                <button
+                                    onClick={() => setChartMode('candlestick')}
+                                    style={{
+                                        background: chartMode === 'candlestick' ? 'var(--accent-primary)' : 'transparent',
+                                        color: chartMode === 'candlestick' ? 'var(--bg-primary)' : 'var(--text-muted)',
+                                        border: '1px solid var(--border-default)',
+                                        borderRadius: 4,
+                                        padding: '4px 12px',
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                    }}
+                                >
+                                    🕯️ Candlestick
+                                </button>
+                            </div>
+                            {/* Timeframe buttons (shown for both modes) */}
+                            <div style={{ display: 'flex', gap: 4 }}>
+                                {['1h', '6h', '1d', '1w', '1m', 'all'].map((tf) => (
+                                    <button
+                                        key={tf}
+                                        onClick={() => setTimeframe(tf)}
+                                        style={{
+                                            background: timeframe === tf ? 'var(--accent-primary)' : 'transparent',
+                                            color: timeframe === tf ? 'var(--bg-primary)' : 'var(--text-muted)',
+                                            border: '1px solid var(--border-subtle)',
+                                            borderRadius: 4,
+                                            padding: '4px 8px',
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            cursor: 'pointer',
+                                            textTransform: 'uppercase',
+                                            transition: 'all 0.15s ease'
+                                        }}
+                                    >
+                                        {tf}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
-                        <ProbabilityChart height={280} color="#00ff41" />
+
+                        {/* Conditional Chart Rendering */}
+                        {chartMode === 'probability' ? (
+                            <ProbabilityChart
+                                data={chartData.length > 0 ? chartData.map(c => ({
+                                    time: new Date(c.time * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric' }),
+                                    value: c.close * 100 // Convert 0-1 to 0-100 for probability chart
+                                })) : undefined}
+                                color="var(--accent-primary)"
+                                height={350}
+                            />
+                        ) : (
+                            <TradingChart data={chartData} height={350} markers={chartMarkers} />
+                        )}
                     </div>
 
                     {/* Description */}
@@ -377,6 +548,15 @@ export default function MarketPage() {
                             </div>
                         </div>
                     </div>
+
+                    {/* Order Book with integrated PIN WALLET */}
+                    <OrderBook
+                        bids={orderBook.bids}
+                        asks={orderBook.asks}
+                        loading={loading}
+                        pinnedWallet={pinnedWallet}
+                        onPinnedWalletChange={setPinnedWallet}
+                    />
                 </aside>
             </div>
 
@@ -411,19 +591,49 @@ export default function MarketPage() {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                             {marketTrades.length > 0 ? marketTrades.slice(0, 20).map((trade, i) => {
                                 const timeAgo = trade.timestamp ? Math.floor((Date.now() - trade.timestamp) / 60000) : 0
+                                const isTx = trade.id && trade.id.startsWith('0x')
                                 return (
-                                    <div key={trade.id || i} style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+                                    <div
+                                        key={trade.id || i}
+                                        onClick={() => isTx && window.open(`https://polygonscan.com/tx/${trade.id}`, '_blank')}
+                                        style={{
+                                            position: 'relative',
+                                            padding: 12,
+                                            background: 'var(--bg-tertiary)',
+                                            borderRadius: 8,
+                                            border: '1px solid var(--border-subtle)',
+                                            cursor: isTx ? 'pointer' : 'default',
+                                            transition: 'border-color 0.2s',
+                                        }}
+                                        onMouseEnter={(e) => isTx && (e.currentTarget.style.borderColor = 'var(--text-muted)')}
+                                        onMouseLeave={(e) => isTx && (e.currentTarget.style.borderColor = 'var(--border-subtle)')}
+                                    >
                                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
                                             <span style={{ color: trade.side === 'BUY' ? 'var(--accent-primary)' : 'var(--accent-danger)' }}>
                                                 {trade.side} {trade.outcome.toUpperCase()}
                                             </span>
-                                            <span style={{ color: 'var(--text-muted)' }}>{timeAgo}m ago</span>
+                                            <span style={{ color: 'var(--text-muted)' }}>{timeAgo}m ago {isTx && '↗'}</span>
                                         </div>
-                                        <div style={{ fontSize: 14, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
-                                            ${trade.value.toFixed(0)}
+                                        <div style={{ fontSize: 14, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-primary)' }}>
+                                            ${trade.value.toFixed(2)}
                                         </div>
                                         {trade.username && (
-                                            <div style={{ fontSize: 10, color: 'var(--accent-primary)', marginTop: 4 }}>🧠 {trade.username}</div>
+                                            <div style={{ fontSize: 10, color: 'var(--accent-primary)', marginTop: 4 }}>
+                                                🧠
+                                                <TraderHoverCard address={trade.user} username={trade.username}>
+                                                    <a
+                                                        href={`https://polymarket.com/profile/${trade.user}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        style={{ color: 'inherit', textDecoration: 'none', marginLeft: 4 }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+                                                    >
+                                                        {trade.username}
+                                                    </a>
+                                                </TraderHoverCard>
+                                            </div>
                                         )}
                                     </div>
                                 )
@@ -439,36 +649,69 @@ export default function MarketPage() {
                         <table className="table table-dense" style={{ fontSize: 13 }}>
                             <thead>
                                 <tr>
-                                    <th>#</th>
-                                    <th>Wallet</th>
-                                    <th>Outcome</th>
-                                    <th style={{ textAlign: 'right' }}>Position</th>
-                                    <th style={{ textAlign: 'right' }}>PnL</th>
+                                    <th style={{ position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 10 }}>#</th>
+                                    <th style={{ position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 10 }}>Trader</th>
+                                    <th style={{ position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 10 }}>Outcome</th>
+                                    <th style={{ textAlign: 'right', position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 10 }}>Shares</th>
+                                    <th style={{ textAlign: 'right', position: 'sticky', top: 0, background: 'var(--bg-secondary)', zIndex: 10 }}>PnL</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {smartWallets.length > 0 ? smartWallets.map((wallet, i) => (
-                                    <tr key={wallet.address} onClick={() => { setSelectedTrader({ rank: i + 1, username: wallet.username, address: wallet.address, pnl: wallet.value }); setIsModalOpen(true) }}>
-                                        <td style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
-                                        <td>
-                                            <span style={{ fontWeight: 500 }}>{wallet.username}</span>
-                                            <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontSize: 10 }}>{wallet.address.slice(0, 6)}...</span>
-                                        </td>
-                                        <td>
-                                            <span className={`badge ${wallet.outcome === 'yes' ? 'badge-success' : 'badge-danger'}`}>
-                                                {wallet.outcome.toUpperCase()}
-                                            </span>
-                                        </td>
-                                        <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
-                                            {formatNumber(wallet.value)}
-                                        </td>
-                                        <td style={{ textAlign: 'right', color: wallet.unrealizedPnl >= 0 ? 'var(--accent-primary)' : 'var(--accent-danger)', fontFamily: "'JetBrains Mono', monospace" }}>
-                                            {formatPnl(wallet.unrealizedPnl)}
-                                        </td>
-                                    </tr>
-                                )) : (
+                                {/* Show TOP 50 Holders, not just smart wallets. Sorted by PnL or Balance */}
+                                {allHolders.length > 0 ? allHolders.slice(0, 50).map((holder, i) => {
+                                    const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
+                                    const isPinned = pinnedWallet && holder.address.toLowerCase() === pinnedWallet.toLowerCase()
+
+                                    // Calculate PnL if missing (API often returns 0 for pnl but provides avgPrice)
+                                    let pnl = holder.pnl || 0
+                                    if (pnl === 0 && holder.avgPrice > 0) {
+                                        const currentPrice = holder.outcome === 'yes' ? yesPrice : noPrice
+                                        // avgPrice is usually 0-1 from API, currentPrice is 0-100
+                                        const entryPrice = holder.avgPrice <= 1 ? holder.avgPrice * 100 : holder.avgPrice
+                                        pnl = (currentPrice - entryPrice) / 100 * holder.balance
+                                    }
+
+                                    return (
+                                        <tr key={holder.address}
+                                            onClick={() => {
+                                                setSelectedTrader({ rank: i + 1, username: holder.username || 'Unknown', address: holder.address, pnl: pnl });
+                                                setIsModalOpen(true);
+                                            }}
+                                            style={{ background: isPinned ? 'rgba(34, 197, 94, 0.1)' : undefined }}
+                                        >
+                                            <td style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
+                                            <td>
+                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <TraderHoverCard address={holder.address} username={holder.username}>
+                                                        <a
+                                                            href={`https://polymarket.com/profile/${holder.address}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            style={{ fontWeight: 500, color: 'var(--text-primary)', textDecoration: 'none' }}
+                                                        >
+                                                            {smartWallet ? '🧠 ' : ''}{holder.username || 'Trader'}
+                                                        </a>
+                                                    </TraderHoverCard>
+                                                    <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>{holder.address.slice(0, 6)}...</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span className={`badge ${holder.outcome === 'yes' ? 'badge-success' : 'badge-danger'}`}>
+                                                    {holder.outcome.toUpperCase()}
+                                                </span>
+                                            </td>
+                                            <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+                                                {formatNumber(holder.balance)}
+                                            </td>
+                                            <td style={{ textAlign: 'right', color: pnl >= 0 ? 'var(--accent-primary)' : 'var(--accent-danger)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                                {formatPnl(pnl)}
+                                            </td>
+                                        </tr>
+                                    )
+                                }) : (
                                     <tr>
-                                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>No smart wallets in this market</td>
+                                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>No traders found</td>
                                     </tr>
                                 )}
                             </tbody>
@@ -484,14 +727,38 @@ export default function MarketPage() {
                                     YES Holders
                                     <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace" }}>{allHolders.filter(h => h.outcome === 'yes').length}</span>
                                 </div>
-                                {allHolders.filter(h => h.outcome === 'yes').length > 0 ? allHolders.filter(h => h.outcome === 'yes').slice(0, 20).map((holder, i) => {
+                                {allHolders.filter(h => h.outcome === 'yes').length > 0 ? allHolders.filter(h => h.outcome === 'yes').slice(0, 20).map((holder) => {
                                     // Check if this is a smart wallet
                                     const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
                                     return (
-                                        <div key={holder.address} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                        <div
+                                            key={holder.address}
+                                            onClick={() => {
+                                                setSelectedTrader({
+                                                    rank: 0,
+                                                    username: holder.username || holder.address.slice(0, 8),
+                                                    address: holder.address,
+                                                    pnl: holder.pnl || 0,
+                                                });
+                                                setIsModalOpen(true);
+                                            }}
+                                            style={{
+                                                padding: '8px 0',
+                                                borderBottom: '1px solid var(--border-subtle)',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                fontSize: 13,
+                                                cursor: 'pointer',
+                                                transition: 'background 0.15s ease',
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                        >
                                             <span>
-                                                {smartWallet ? (
-                                                    <span style={{ color: 'var(--accent-primary)' }}>🧠 {smartWallet.username}</span>
+                                                {holder.username ? (
+                                                    <span style={{ color: smartWallet ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                                                        {smartWallet ? '🧠 ' : ''}{holder.username}
+                                                    </span>
                                                 ) : (
                                                     <span style={{ color: 'var(--text-muted)' }}>{holder.address.slice(0, 6)}...{holder.address.slice(-4)}</span>
                                                 )}
@@ -510,13 +777,37 @@ export default function MarketPage() {
                                     NO Holders
                                     <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace" }}>{allHolders.filter(h => h.outcome === 'no').length}</span>
                                 </div>
-                                {allHolders.filter(h => h.outcome === 'no').length > 0 ? allHolders.filter(h => h.outcome === 'no').slice(0, 20).map((holder, i) => {
+                                {allHolders.filter(h => h.outcome === 'no').length > 0 ? allHolders.filter(h => h.outcome === 'no').slice(0, 20).map((holder) => {
                                     const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
                                     return (
-                                        <div key={holder.address} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                        <div
+                                            key={holder.address}
+                                            onClick={() => {
+                                                setSelectedTrader({
+                                                    rank: 0,
+                                                    username: holder.username || holder.address.slice(0, 8),
+                                                    address: holder.address,
+                                                    pnl: holder.pnl || 0,
+                                                });
+                                                setIsModalOpen(true);
+                                            }}
+                                            style={{
+                                                padding: '8px 0',
+                                                borderBottom: '1px solid var(--border-subtle)',
+                                                display: 'flex',
+                                                justifyContent: 'space-between',
+                                                fontSize: 13,
+                                                cursor: 'pointer',
+                                                transition: 'background 0.15s ease',
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                        >
                                             <span>
-                                                {smartWallet ? (
-                                                    <span style={{ color: 'var(--accent-primary)' }}>🧠 {smartWallet.username}</span>
+                                                {holder.username ? (
+                                                    <span style={{ color: smartWallet ? 'var(--accent-primary)' : 'var(--text-primary)' }}>
+                                                        {smartWallet ? '🧠 ' : ''}{holder.username}
+                                                    </span>
                                                 ) : (
                                                     <span style={{ color: 'var(--text-muted)' }}>{holder.address.slice(0, 6)}...{holder.address.slice(-4)}</span>
                                                 )}

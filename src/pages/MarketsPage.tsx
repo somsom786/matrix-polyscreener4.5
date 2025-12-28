@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { fetchMarkets, SMART_WALLETS } from '../services/polymarket'
+import { fetchMarkets } from '../services/polymarket'
 import type { Market } from '../services/polymarket'
 import StatusBar, { Sparkline } from '../components/StatusBar'
 

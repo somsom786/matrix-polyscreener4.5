@@ -85,6 +85,7 @@ export interface MarketHolder {
     balance: number
     outcome: string
     pnl?: number
+    username?: string
 }
 
 // ===== Interfaces =====
@@ -105,11 +106,11 @@ export interface Market {
     featured?: boolean
     conditionId?: string
     smartWalletCount?: number
-    // Multi-outcome support
     groupSlug?: string  // If part of an event group
     outcomeCount?: number  // Number of outcomes (2 = Yes/No, 3+ = multi)
     outcomes?: string[]  // Outcome names for multi-outcome markets
     eventId?: string  // Parent event ID
+    clobTokenIds?: string[] // CLOB Token IDs for order book
 }
 
 // Event (group of related markets)
@@ -195,20 +196,9 @@ async function graphqlQuery<T>(endpoint: string, query: string, variables?: Reco
 }
 
 // Fetch top holders for a specific market
+// Fetch top holders for a specific market
 export async function fetchMarketHolders(conditionId: string, limit = 50): Promise<MarketHolder[]> {
-    console.log(`Fetching holders for market: ${conditionId}`)
-    try {
-        const response = await fetch(`${DATA_API}/holders?market=${conditionId}&limit=${limit}&minBalance=1`)
-        if (!response.ok) {
-            console.warn(`Failed to fetch holders: ${response.status}`)
-            return []
-        }
-        const data = await response.json()
-        return Array.isArray(data) ? data : []
-    } catch (err) {
-        console.error('Failed to fetch market holders:', err)
-        return []
-    }
+    return fetchAllMarketHolders(conditionId, limit)
 }
 
 // Get smart wallets that have positions in a specific market
@@ -378,6 +368,14 @@ export async function fetchMarket(slug: string): Promise<Market | null> {
         const response = await fetch(`${GAMMA_API}/markets/${slug}`)
         if (response.ok) {
             const data = await response.json()
+            if (data.clobTokenIds && typeof data.clobTokenIds === 'string') {
+                try {
+                    data.clobTokenIds = JSON.parse(data.clobTokenIds)
+                } catch (e) {
+                    console.error('Failed to parse clobTokenIds:', e)
+                    data.clobTokenIds = []
+                }
+            }
             console.log(`✅ Found market by ID: ${data.question}`)
             return data
         }
@@ -397,6 +395,30 @@ export async function fetchOrderBook(tokenId: string): Promise<{ bids: Array<{ p
         console.error('Failed to fetch order book:', err)
     }
     return { bids: [], asks: [] }
+}
+
+// Fetch price history (OHLC) from CLOB API
+export async function fetchPriceHistory(tokenId: string, interval: string = '1h'): Promise<Array<{ time: number; open: number; high: number; low: number; close: number }>> {
+    try {
+        const response = await fetch(`${CLOB_API}/prices-history?market=${tokenId}&interval=${interval}`)
+        if (!response.ok) return []
+        const data = await response.json()
+
+        // Data format: { history: [{ t: timestamp, o: open, h: high, l: low, c: close }, ...] }
+        if (data.history && Array.isArray(data.history)) {
+            return data.history.map((candle: any) => ({
+                time: candle.t,
+                open: parseFloat(candle.o),
+                high: parseFloat(candle.h),
+                low: parseFloat(candle.l),
+                close: parseFloat(candle.c),
+            })).sort((a: any, b: any) => a.time - b.time)
+        }
+        return []
+    } catch (err) {
+        console.error('Failed to fetch price history:', err)
+        return []
+    }
 }
 
 // Fetch positions from Goldsky subgraph
@@ -494,17 +516,62 @@ export async function fetchUserPositions(address: string): Promise<UserPosition[
         return data.map((pos: any) => ({
             conditionId: pos.conditionId || pos.market || '',
             market: pos.market || pos.conditionId || '',
-            outcome: pos.outcome?.toLowerCase() === 'yes' ? 'yes' : 'no',
+            outcome: (pos.outcome?.toLowerCase() === 'yes' ? 'yes' : 'no') as 'yes' | 'no',
             shares: parseFloat(pos.size || pos.shares || '0'),
             avgPrice: parseFloat(pos.avgPrice || pos.averagePrice || '0') * 100,
             currentPrice: parseFloat(pos.curPrice || pos.currentPrice || pos.avgPrice || '0') * 100,
             value: parseFloat(pos.value || '0'),
-            unrealizedPnl: parseFloat(pos.pnl || pos.unrealizedPnl || '0'),
+            unrealizedPnl: parseFloat(pos.pnl || pos.unrealizedPnl || pos.return || '0'),
             marketQuestion: pos.title || pos.question || pos.marketTitle || '',
             marketSlug: pos.slug || pos.marketSlug || '',
-        })).filter((pos: UserPosition) => pos.value >= 100)
+        })).filter((pos: UserPosition) => pos.value >= 10); // Lower threshold to show more positions
     } catch (err) {
         console.error('Failed to fetch user positions:', err)
+        return []
+    }
+}
+
+// NEW: Fetch trade history for a specific user address
+export interface UserTrade {
+    id: string
+    market: string
+    marketTitle: string
+    side: 'BUY' | 'SELL'
+    outcome: 'yes' | 'no'
+    shares: number
+    price: number
+    value: number
+    pnl: number
+    timestamp: number
+}
+
+export async function fetchUserTrades(address: string, limit = 100): Promise<UserTrade[]> {
+    console.log(`Fetching trade history for user: ${address}`)
+    try {
+        // Use Polymarket Data API for user trades
+        const response = await fetch(`${DATA_API}/trades?user=${address}&limit=${limit}`)
+        if (!response.ok) {
+            console.warn(`Failed to fetch user trades: ${response.status}`)
+            return []
+        }
+        const data = await response.json()
+
+        if (!Array.isArray(data)) return []
+
+        return data.map((trade: any) => ({
+            id: trade.transactionHash || trade.id || `${address}-${trade.timestamp}`,
+            market: trade.conditionId || trade.market || '',
+            marketTitle: trade.title || trade.question || trade.marketTitle || 'Unknown Market',
+            side: trade.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+            outcome: trade.outcome?.toLowerCase() === 'no' ? 'no' : 'yes',
+            shares: parseFloat(trade.size || trade.shares || trade.amount || '0'),
+            price: parseFloat(trade.price || '0') * 100,
+            value: parseFloat(trade.value || trade.usdcSize || '0'),
+            pnl: parseFloat(trade.pnl || trade.realizedPnl || '0'),
+            timestamp: parseInt(trade.timestamp || '0') * 1000,
+        }))
+    } catch (err) {
+        console.error('Failed to fetch user trades:', err)
         return []
     }
 }
@@ -514,7 +581,7 @@ export async function fetchMarketTrades(conditionId: string, limit = 50): Promis
     console.log(`Fetching real trades for market: ${conditionId}`)
     try {
         // Use Polymarket Data API for market trades
-        const response = await fetch(`${DATA_API}/activity?market=${conditionId}&type=TRADE&limit=${limit}`)
+        const response = await fetch(`${DATA_API}/trades?market=${conditionId}&limit=${limit}`)
         if (!response.ok) {
             console.warn(`Failed to fetch market trades: ${response.status}`)
             return []
@@ -527,17 +594,30 @@ export async function fetchMarketTrades(conditionId: string, limit = 50): Promis
         const smartLookup = new Map(SMART_WALLETS.map(w => [w.address.toLowerCase(), w.username]))
 
         return data.map((trade: any) => {
-            const userAddr = (trade.user || trade.maker || '').toLowerCase()
+            const userAddr = (trade.proxyWallet || trade.user || trade.maker || '').toLowerCase()
+
+            // Get username from Smart Wallet lookup or API display name/pseudonym
+            const smartName = smartLookup.get(userAddr)
+            let apiName = undefined
+            // Prioritize display name if it exists and isn't an address
+            if (trade.name && !trade.name.startsWith('0x')) {
+                apiName = trade.name
+            }
+            // Fallback to pseudonym if no display name
+            if (!apiName) {
+                apiName = trade.pseudonym
+            }
+
             return {
-                id: trade.id || `${trade.user}-${trade.timestamp}`,
-                user: trade.user || trade.maker || '',
+                id: trade.transactionHash || trade.id || `${userAddr}-${trade.timestamp}`,
+                user: userAddr,
                 side: trade.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
                 outcome: trade.outcome?.toLowerCase() === 'no' ? 'no' : 'yes',
                 shares: parseFloat(trade.size || trade.shares || trade.amount || '0'),
-                price: parseFloat(trade.price || '0') * 100,
-                value: parseFloat(trade.value || trade.usdcSize || '0'),
-                timestamp: parseInt(trade.timestamp || '0') * 1000,
-                username: smartLookup.get(userAddr) || undefined,
+                price: parseFloat(trade.price || '0') * 100, // Convert to percentage/cents
+                value: parseFloat(trade.value || trade.usdcSize || (parseFloat(trade.price || '0') * parseFloat(trade.size || '0')).toString()),
+                timestamp: parseInt(trade.timestamp || '0') * 1000, // Convert seconds to ms
+                username: smartName || apiName || undefined,
             }
         })
     } catch (err) {
@@ -553,41 +633,55 @@ export async function fetchAllMarketHolders(conditionId: string, limit = 100): P
         // Use same /holders endpoint as fetchMarketHolders but don't set too high limit to avoid timeout
         const response = await fetch(`${DATA_API}/holders?market=${conditionId}&limit=${limit}&minBalance=1`)
         if (!response.ok) {
-            console.warn(`Failed to fetch all holders: ${response.status}, using fallback`)
-            // Fallback to existing function
-            return fetchMarketHolders(conditionId, limit)
+            console.warn(`Failed to fetch all holders: ${response.status}`)
+            return []
         }
         const data = await response.json()
 
         if (!Array.isArray(data)) return []
 
-        // Debug: log first holder to see structure
-        if (data.length > 0) {
-            console.log('Sample holder from API:', JSON.stringify(data[0]))
-        }
+        // Debug: log structure
+        // console.log('Holders API structure:', JSON.stringify(data[0]))
 
         // Map and enrich with wallet names from SMART_WALLETS
         const smartLookup = new Map(SMART_WALLETS.map(w => [w.address.toLowerCase(), w.username]))
 
-        return data.map((holder: any) => {
-            // The API might return outcome in different fields: outcome, asset, side
-            let outcome = 'yes'
-            if (holder.outcome) {
-                outcome = holder.outcome.toLowerCase().includes('yes') ? 'yes' : 'no'
-            } else if (holder.asset) {
-                // Asset might be like "Will X happen? Yes" or just "Yes"/"No"
-                outcome = String(holder.asset).toLowerCase().includes('yes') ? 'yes' : 'no'
-            }
+        const allHolders: MarketHolder[] = []
 
-            return {
-                address: holder.address || holder.user || '',
-                balance: parseFloat(holder.balance || holder.size || holder.shares || '0'),
-                outcome,
-                pnl: parseFloat(holder.pnl || holder.unrealizedPnl || '0'),
-                avgPrice: parseFloat(holder.avgPrice || holder.averagePrice || '0'),
-                username: smartLookup.get((holder.address || holder.user || '').toLowerCase()),
+        // Handle nested structure: [{ holders: [...] }, { holders: [...] }]
+        // Each item in the root array represents an outcome token
+        data.forEach((tokenData: any) => {
+            if (Array.isArray(tokenData.holders)) {
+                tokenData.holders.forEach((holder: any) => {
+                    // For binary markets: outcomeIndex 0 is typically NO, 1 is YES
+                    // We map based on outcomeIndex
+                    const outcome = holder.outcomeIndex === 1 ? 'yes' : 'no'
+
+                    // Get username from Smart Wallet lookup or API display name/pseudonym
+                    const smartName = smartLookup.get((holder.proxyWallet || holder.address || '').toLowerCase())
+                    let apiName = undefined
+                    // Prioritize display name if it exists and isn't an address
+                    if (holder.name && !holder.name.startsWith('0x')) {
+                        apiName = holder.name
+                    }
+                    // Fallback to pseudonym if no display name
+                    if (!apiName) {
+                        apiName = holder.pseudonym
+                    }
+
+                    allHolders.push({
+                        address: holder.proxyWallet || holder.address || holder.user || '',
+                        balance: parseFloat(holder.amount || holder.balance || holder.size || '0'),
+                        outcome: outcome as 'yes' | 'no',
+                        pnl: parseFloat(holder.pnl || holder.unrealizedPnl || holder.return || '0'),
+                        avgPrice: parseFloat(holder.avgPrice || holder.averagePrice || '0'),
+                        username: smartName || apiName,
+                    })
+                })
             }
-        }).filter((h: MarketHolder) => h.balance >= 1) // Filter dust
+        })
+
+        return allHolders.filter((h: MarketHolder) => h.balance >= 1) // Filter dust
     } catch (err) {
         console.error('Failed to fetch all holders:', err)
         return []

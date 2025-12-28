@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { fetchUserPositions, type UserPosition } from '../services/polymarket'
+import { fetchUserPositions, fetchUserTrades, type UserPosition, type UserTrade } from '../services/polymarket'
 
 interface Trade {
     id: string
@@ -67,19 +67,20 @@ export default function TraderModal({ isOpen, onClose, trader }: TraderModalProp
     const [activeTab, setActiveTab] = useState<TabType>('positions')
     const [calendarMonth] = useState('Dec 2025')
     const [realPositions, setRealPositions] = useState<UserPosition[]>([])
-    const [loading, setLoading] = useState(false)
+    const [realTrades, setRealTrades] = useState<UserTrade[]>([])
 
     // Get the full address for links (fallback to address if fullAddress not provided)
     const fullAddress = trader?.fullAddress || trader?.address || ''
 
-    // Fetch REAL positions from Polymarket API
+    // Fetch REAL positions and trades from Polymarket API
     useEffect(() => {
         if (!isOpen || !fullAddress) {
             setRealPositions([])
+            setRealTrades([])
             return
         }
 
-        setLoading(true)
+        // Fetch positions
         fetchUserPositions(fullAddress)
             .then(positions => {
                 console.log(`Loaded ${positions.length} real positions for ${trader?.username}`)
@@ -89,10 +90,20 @@ export default function TraderModal({ isOpen, onClose, trader }: TraderModalProp
                 console.error('Failed to fetch positions:', err)
                 setRealPositions([])
             })
-            .finally(() => setLoading(false))
+
+        // Fetch trades (history)
+        fetchUserTrades(fullAddress, 100)
+            .then(trades => {
+                console.log(`Loaded ${trades.length} real trades for ${trader?.username}`)
+                setRealTrades(trades)
+            })
+            .catch(err => {
+                console.error('Failed to fetch trades:', err)
+                setRealTrades([])
+            })
     }, [isOpen, fullAddress, trader?.username])
 
-    // Convert real positions to our display format
+    // Convert real data to our display format
     const data = useMemo((): TraderData | null => {
         if (!trader) return null
 
@@ -106,7 +117,20 @@ export default function TraderModal({ isOpen, onClose, trader }: TraderModalProp
             unrealizedPnl: pos.unrealizedPnl,
         }))
 
+        // Convert real trades to Trade format
+        const history: Trade[] = realTrades.map((t, i) => ({
+            id: t.id || `trade-${i}`,
+            market: t.marketTitle || 'Unknown Market',
+            type: t.side.toLowerCase() as 'buy' | 'sell',
+            outcome: t.outcome === 'yes' ? 'Yes' : 'No',
+            amount: t.value,
+            price: t.price / 100,
+            pnl: t.pnl,
+            timestamp: new Date(t.timestamp),
+        }))
+
         const totalUnrealized = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
+        const totalRealized = history.reduce((sum, t) => sum + t.pnl, 0)
         const totalValue = positions.reduce((sum, p) => sum + p.shares * p.currentPrice, 0) || trader.pnl * 0.3
 
         return {
@@ -114,14 +138,14 @@ export default function TraderModal({ isOpen, onClose, trader }: TraderModalProp
             username: trader.username,
             totalValue,
             unrealizedPnl: totalUnrealized,
-            realizedPnl: trader.pnl - totalUnrealized,
-            availableBalance: trader.pnl * 0.3,
-            totalTxns: 0, // Will be fetched later
+            realizedPnl: totalRealized || trader.pnl - totalUnrealized,
+            availableBalance: totalValue,
+            totalTxns: history.length,
             positions,
-            history: [],
-            activity: [],
+            history,
+            activity: history.slice(0, 20), // Most recent trades for activity tab
         }
-    }, [trader, fullAddress, realPositions])
+    }, [trader, fullAddress, realPositions, realTrades])
 
     const calendarData = useMemo(() => generateCalendarData(), [])
 
