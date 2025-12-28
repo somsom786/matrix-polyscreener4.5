@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { fetchMarket, getSmartWalletsForMarket, SMART_WALLETS } from '../services/polymarket'
-import type { Market, SmartWalletPosition } from '../services/polymarket'
+import { fetchMarket, getSmartWalletsForMarket, SMART_WALLETS, fetchMarketTrades, fetchAllMarketHolders } from '../services/polymarket'
+import type { Market, SmartWalletPosition, MarketTrade, MarketHolder } from '../services/polymarket'
 import ProbabilityChart from '../components/ProbabilityChart'
 import TraderModal from '../components/TraderModal'
 
@@ -60,6 +60,11 @@ export default function MarketPage() {
     const [selectedTrader, setSelectedTrader] = useState<TraderForModal | null>(null)
     const [isModalOpen, setIsModalOpen] = useState(false)
     const [copied, setCopied] = useState<string | null>(null)
+    const [activeTab, setActiveTab] = useState<'activity' | 'traders' | 'holders'>('traders')
+
+    // NEW: Real market data from API
+    const [marketTrades, setMarketTrades] = useState<MarketTrade[]>([])
+    const [allHolders, setAllHolders] = useState<MarketHolder[]>([])
 
     useEffect(() => {
         async function loadMarket() {
@@ -69,8 +74,21 @@ export default function MarketPage() {
                 const data = await fetchMarket(id)
                 if (data) {
                     setMarket(data)
-                    const wallets = await getSmartWalletsForMarket(data.conditionId || data.id)
+                    const conditionId = data.conditionId || data.id
+                    console.log(`Market loaded - conditionId: ${conditionId}, id: ${data.id}, length: ${conditionId?.length}`)
+
+                    // Fetch all data in parallel
+                    const [wallets, trades, holders] = await Promise.all([
+                        getSmartWalletsForMarket(conditionId),
+                        fetchMarketTrades(conditionId, 50),
+                        fetchAllMarketHolders(conditionId, 100),
+                    ])
+
                     setSmartWallets(wallets)
+                    setMarketTrades(trades)
+                    setAllHolders(holders)
+
+                    console.log(`Loaded: ${wallets.length} smart wallets, ${trades.length} trades, ${holders.length} holders`)
                 }
             } catch (err) {
                 console.error('Market load error:', err)
@@ -140,10 +158,78 @@ export default function MarketPage() {
                 </div>
             </header>
 
-            {/* Main Grid */}
-            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 320px', gap: 0 }}>
+            {/* Fireplace-style Market Stats Bar */}
+            <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0,
+                padding: '0 24px',
+                height: 44,
+                background: 'var(--bg-secondary)',
+                borderBottom: '1px solid var(--border-subtle)',
+            }}>
+                {/* Market Title (truncated) */}
+                <div style={{ flex: '0 0 300px', overflow: 'hidden', paddingRight: 24, borderRight: '1px solid var(--border-subtle)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {market.question}
+                    </div>
+                </div>
+
+                {/* Stats Strip */}
+                <div style={{ display: 'flex', flex: 1, justifyContent: 'space-around' }}>
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Probability</div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--accent-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {yesPrice.toFixed(1)}%
+                        </div>
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border-subtle)' }} />
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>24h Volume</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {formatNumber(Number(market.volume24hr) || volume * 0.1)}
+                        </div>
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border-subtle)' }} />
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Total Volume</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {formatNumber(volume)}
+                        </div>
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border-subtle)' }} />
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Liquidity</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {formatNumber(liquidity)}
+                        </div>
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border-subtle)' }} />
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Smart Wallets</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: smartWallets.length > 0 ? 'var(--accent-primary)' : 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            🧠 {smartWallets.length}
+                        </div>
+                    </div>
+                    <div style={{ width: 1, background: 'var(--border-subtle)' }} />
+                    <div style={{ textAlign: 'center', padding: '0 16px' }}>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ends</div>
+                        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--accent-highlight)', fontFamily: "'JetBrains Mono', monospace" }}>
+                            {endDate}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Main Grid - Responsive: stacks on mobile */}
+            <div style={{
+                flex: 1,
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) minmax(280px, 320px)',
+                gap: 0,
+            }} className="market-grid">
                 {/* Left Content */}
-                <main style={{ padding: 24, borderRight: '1px solid var(--matrix-border)' }}>
+                <main style={{ padding: 'clamp(12px, 3vw, 24px)', borderRight: '1px solid var(--matrix-border)' }}>
                     {/* Market Info */}
                     <div style={{ marginBottom: 24 }}>
                         <h1 style={{ fontSize: 20, fontWeight: 600, color: 'var(--matrix-text)', marginBottom: 12, lineHeight: 1.4 }}>
@@ -293,6 +379,160 @@ export default function MarketPage() {
                     </div>
                 </aside>
             </div>
+
+            {/* Fireplace-style Tabbed Bottom Panel */}
+            <div style={{ borderTop: '1px solid var(--border-subtle)', background: 'var(--bg-secondary)' }}>
+                {/* Tab Headers */}
+                <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border-subtle)', padding: '0 24px' }}>
+                    {(['activity', 'traders', 'holders'] as const).map((tab) => (
+                        <button
+                            key={tab}
+                            onClick={() => setActiveTab(tab)}
+                            style={{
+                                padding: '12px 20px',
+                                background: 'transparent',
+                                border: 'none',
+                                borderBottom: activeTab === tab ? '2px solid var(--accent-primary)' : '2px solid transparent',
+                                color: activeTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
+                                fontWeight: 500,
+                                fontSize: 13,
+                                cursor: 'pointer',
+                                textTransform: 'capitalize',
+                            }}
+                        >
+                            {tab === 'traders' ? 'Top Traders' : tab}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Tab Content */}
+                <div style={{ padding: 24, maxHeight: 300, overflow: 'auto' }}>
+                    {activeTab === 'activity' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
+                            {marketTrades.length > 0 ? marketTrades.slice(0, 20).map((trade, i) => {
+                                const timeAgo = trade.timestamp ? Math.floor((Date.now() - trade.timestamp) / 60000) : 0
+                                return (
+                                    <div key={trade.id || i} style={{ padding: 12, background: 'var(--bg-tertiary)', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                                            <span style={{ color: trade.side === 'BUY' ? 'var(--accent-primary)' : 'var(--accent-danger)' }}>
+                                                {trade.side} {trade.outcome.toUpperCase()}
+                                            </span>
+                                            <span style={{ color: 'var(--text-muted)' }}>{timeAgo}m ago</span>
+                                        </div>
+                                        <div style={{ fontSize: 14, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
+                                            ${trade.value.toFixed(0)}
+                                        </div>
+                                        {trade.username && (
+                                            <div style={{ fontSize: 10, color: 'var(--accent-primary)', marginTop: 4 }}>🧠 {trade.username}</div>
+                                        )}
+                                    </div>
+                                )
+                            }) : (
+                                <div style={{ gridColumn: '1/-1', textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>
+                                    No recent trades found
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {activeTab === 'traders' && (
+                        <table className="table table-dense" style={{ fontSize: 13 }}>
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Wallet</th>
+                                    <th>Outcome</th>
+                                    <th style={{ textAlign: 'right' }}>Position</th>
+                                    <th style={{ textAlign: 'right' }}>PnL</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {smartWallets.length > 0 ? smartWallets.map((wallet, i) => (
+                                    <tr key={wallet.address} onClick={() => { setSelectedTrader({ rank: i + 1, username: wallet.username, address: wallet.address, pnl: wallet.value }); setIsModalOpen(true) }}>
+                                        <td style={{ color: 'var(--text-muted)' }}>{i + 1}</td>
+                                        <td>
+                                            <span style={{ fontWeight: 500 }}>{wallet.username}</span>
+                                            <span style={{ color: 'var(--text-muted)', marginLeft: 8, fontSize: 10 }}>{wallet.address.slice(0, 6)}...</span>
+                                        </td>
+                                        <td>
+                                            <span className={`badge ${wallet.outcome === 'yes' ? 'badge-success' : 'badge-danger'}`}>
+                                                {wallet.outcome.toUpperCase()}
+                                            </span>
+                                        </td>
+                                        <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>
+                                            {formatNumber(wallet.value)}
+                                        </td>
+                                        <td style={{ textAlign: 'right', color: wallet.unrealizedPnl >= 0 ? 'var(--accent-primary)' : 'var(--accent-danger)', fontFamily: "'JetBrains Mono', monospace" }}>
+                                            {formatPnl(wallet.unrealizedPnl)}
+                                        </td>
+                                    </tr>
+                                )) : (
+                                    <tr>
+                                        <td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: 24 }}>No smart wallets in this market</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    )}
+
+                    {activeTab === 'holders' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+                            {/* Yes Holders */}
+                            <div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--accent-primary)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-primary)' }} />
+                                    YES Holders
+                                    <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace" }}>{allHolders.filter(h => h.outcome === 'yes').length}</span>
+                                </div>
+                                {allHolders.filter(h => h.outcome === 'yes').length > 0 ? allHolders.filter(h => h.outcome === 'yes').slice(0, 20).map((holder, i) => {
+                                    // Check if this is a smart wallet
+                                    const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
+                                    return (
+                                        <div key={holder.address} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                            <span>
+                                                {smartWallet ? (
+                                                    <span style={{ color: 'var(--accent-primary)' }}>🧠 {smartWallet.username}</span>
+                                                ) : (
+                                                    <span style={{ color: 'var(--text-muted)' }}>{holder.address.slice(0, 6)}...{holder.address.slice(-4)}</span>
+                                                )}
+                                            </span>
+                                            <span style={{ color: 'var(--accent-primary)', fontFamily: "'JetBrains Mono', monospace" }}>{formatNumber(holder.balance)}</span>
+                                        </div>
+                                    )
+                                }) : (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No YES holders found</div>
+                                )}
+                            </div>
+                            {/* No Holders */}
+                            <div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--accent-danger)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-danger)' }} />
+                                    NO Holders
+                                    <span style={{ marginLeft: 'auto', fontFamily: "'JetBrains Mono', monospace" }}>{allHolders.filter(h => h.outcome === 'no').length}</span>
+                                </div>
+                                {allHolders.filter(h => h.outcome === 'no').length > 0 ? allHolders.filter(h => h.outcome === 'no').slice(0, 20).map((holder, i) => {
+                                    const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
+                                    return (
+                                        <div key={holder.address} style={{ padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                                            <span>
+                                                {smartWallet ? (
+                                                    <span style={{ color: 'var(--accent-primary)' }}>🧠 {smartWallet.username}</span>
+                                                ) : (
+                                                    <span style={{ color: 'var(--text-muted)' }}>{holder.address.slice(0, 6)}...{holder.address.slice(-4)}</span>
+                                                )}
+                                            </span>
+                                            <span style={{ color: 'var(--accent-danger)', fontFamily: "'JetBrains Mono', monospace" }}>{formatNumber(holder.balance)}</span>
+                                        </div>
+                                    )
+                                }) : (
+                                    <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No NO holders found</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
 
             <TraderModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} trader={selectedTrader} />
         </div>

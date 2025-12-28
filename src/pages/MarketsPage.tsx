@@ -2,30 +2,24 @@ import { useState, useEffect, useMemo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchMarkets, SMART_WALLETS } from '../services/polymarket'
 import type { Market } from '../services/polymarket'
+import StatusBar, { Sparkline } from '../components/StatusBar'
 
-// Sort filter types
-type SortFilter = 'trending' | 'new' | 'politics' | 'crypto' | 'sports' | 'business' | 'science' | 'culture' | 'smart'
+type SortFilter = 'trending' | 'new' | 'politics' | 'crypto' | 'sports' | 'smart'
 type MarketWithSmartCount = Market & { smartCount: number }
 
 const SECTORS: { id: SortFilter; label: string; icon: string }[] = [
     { id: 'trending', label: 'Trending', icon: '⚡' },
     { id: 'new', label: 'New', icon: '✦' },
-    { id: 'politics', label: 'Politics', icon: '⚖' },
+    { id: 'politics', label: 'Politics', icon: '🏛' },
     { id: 'crypto', label: 'Crypto', icon: '₿' },
     { id: 'sports', label: 'Sports', icon: '⚽' },
-    { id: 'business', label: 'Business', icon: '$' },
-    { id: 'science', label: 'Science', icon: '⚗' },
-    { id: 'culture', label: 'Culture', icon: '#' },
-    { id: 'smart', label: 'Smart Only', icon: '🧠' },
+    { id: 'smart', label: 'Smart Money', icon: '🧠' },
 ]
 
 const CATEGORY_KEYWORDS: Record<string, string[]> = {
-    politics: ['trump', 'biden', 'president', 'congress', 'senate', 'democrat', 'republican', 'election', 'vote'],
-    crypto: ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'crypto', 'token', 'blockchain'],
-    sports: ['nfl', 'nba', 'mlb', 'championship', 'playoffs', 'game', 'win the', 'football', 'basketball'],
-    business: ['fed', 'interest rate', 'stock', 'market', 'nasdaq', 'trading', 'earnings'],
-    science: ['ai', 'gpt', 'spacex', 'nasa', 'climate', 'research'],
-    culture: ['movie', 'oscar', 'grammy', 'celebrity', 'netflix', 'album'],
+    politics: ['trump', 'biden', 'president', 'congress', 'senate', 'democrat', 'republican', 'election'],
+    crypto: ['bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'crypto'],
+    sports: ['nfl', 'nba', 'mlb', 'championship', 'playoffs', 'game'],
 }
 
 function getSmartWalletCount(marketId: string): number {
@@ -59,24 +53,10 @@ function parsePrice(priceData: unknown): number {
         }
         if (typeof priceData === 'string' && priceData.trim()) {
             const parsed = JSON.parse(priceData)
-            if (Array.isArray(parsed) && parsed.length > 0) {
-                return Math.min(100, Math.max(0, parseFloat(String(parsed[0])) * 100))
-            }
+            if (Array.isArray(parsed)) return Math.min(100, Math.max(0, parseFloat(String(parsed[0])) * 100))
         }
         return 50
-    } catch {
-        return 50
-    }
-}
-
-// Live time component
-function LiveTime() {
-    const [time, setTime] = useState(new Date())
-    useEffect(() => {
-        const i = setInterval(() => setTime(new Date()), 1000)
-        return () => clearInterval(i)
-    }, [])
-    return <span>{time.toLocaleTimeString('en-US', { hour12: false, timeZone: 'UTC' })} UTC</span>
+    } catch { return 50 }
 }
 
 export default function MarketsPage() {
@@ -85,9 +65,10 @@ export default function MarketsPage() {
     const [loading, setLoading] = useState(true)
     const [search, setSearch] = useState('')
     const [sector, setSector] = useState<SortFilter>('trending')
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
     useEffect(() => {
-        async function loadMarkets() {
+        async function loadData() {
             try {
                 setLoading(true)
                 const data = await fetchMarkets(500, true)
@@ -98,232 +79,239 @@ export default function MarketsPage() {
                         smartCount: getSmartWalletCount((m as Market).conditionId || (m as Market).id),
                     }))
                 setMarkets(validMarkets)
+                console.log(`Loaded ${validMarkets.length} markets`)
             } catch (err) {
-                console.error('Failed to load markets:', err)
+                console.error('Failed to load data:', err)
             } finally {
                 setLoading(false)
             }
         }
-        loadMarkets()
+        loadData()
     }, [])
 
     const filteredMarkets = useMemo(() => {
         let result = [...markets]
-
-        // Search
         if (search) {
             const q = search.toLowerCase()
             result = result.filter(m => (m.question || '').toLowerCase().includes(q))
         }
-
-        // Sector filter
         if (sector === 'smart') {
             result = result.filter(m => m.smartCount > 0).sort((a, b) => b.smartCount - a.smartCount)
         } else if (sector === 'trending') {
-            result.sort((a, b) => (Number(b.volume24hr) || Number(b.volume) || 0) - (Number(a.volume24hr) || Number(a.volume) || 0))
+            result.sort((a, b) => (Number(b.volume24hr) || 0) - (Number(a.volume24hr) || 0))
         } else if (sector === 'new') {
             result.sort((a, b) => new Date(b.endDate || 0).getTime() - new Date(a.endDate || 0).getTime())
         } else if (CATEGORY_KEYWORDS[sector]) {
             result = result.filter(m => matchCategory(m) === sector)
-            result.sort((a, b) => (Number(b.volume24hr) || 0) - (Number(a.volume24hr) || 0))
         }
-
-        return result.slice(0, 100)
+        return result.slice(0, 50)
     }, [markets, search, sector])
 
     const totalVolume = useMemo(() => markets.reduce((sum, m) => sum + (Number(m.volume) || 0), 0), [markets])
-    const smartMarketsCount = useMemo(() => markets.filter(m => m.smartCount > 0).length, [markets])
+    const smartCount = useMemo(() => markets.filter(m => m.smartCount > 0).length, [markets])
+
 
     return (
-        <div className="matrix-grid" style={{ minHeight: '100vh', display: 'flex' }}>
-            {/* Left Sidebar */}
-            <aside style={{
-                width: 200,
-                background: 'var(--matrix-bg-secondary)',
-                borderRight: '1px solid var(--matrix-border)',
-                display: 'flex',
-                flexDirection: 'column',
-                position: 'sticky',
-                top: 0,
-                height: '100vh',
-            }}>
-                {/* Logo */}
-                <Link to="/" style={{
-                    padding: '20px 16px',
-                    borderBottom: '1px solid var(--matrix-border)',
-                    textDecoration: 'none',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                }}>
-                    <span style={{ color: 'var(--matrix-green)', fontWeight: 700, fontSize: 16, letterSpacing: '0.05em' }}>
-                        POLY<span style={{ color: 'var(--matrix-text-white)' }}>SCREENER</span>
-                    </span>
-                </Link>
+        <div style={{ minHeight: '100vh', display: 'flex', background: 'var(--bg-primary)', position: 'relative' }}>
+            {/* Mobile Menu Button */}
+            <button
+                className="show-mobile"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                style={{
+                    position: 'fixed',
+                    top: 12,
+                    left: 12,
+                    zIndex: 1001,
+                    background: 'var(--bg-elevated)',
+                    border: '1px solid var(--border-default)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '8px 12px',
+                    color: 'var(--text-primary)',
+                    fontSize: 20,
+                    cursor: 'pointer',
+                }}
+            >
+                {mobileMenuOpen ? '✕' : '☰'}
+            </button>
 
-                {/* Sectors */}
-                <div style={{ padding: '12px 0' }}>
-                    <div style={{
-                        padding: '8px 16px',
-                        fontSize: 11,
-                        color: 'var(--matrix-text-muted)',
-                        letterSpacing: '0.15em',
-                    }}>
-                        SECTORS
-                    </div>
+            {/* Mobile Overlay */}
+            {mobileMenuOpen && (
+                <div
+                    className="show-mobile"
+                    onClick={() => setMobileMenuOpen(false)}
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0,0,0,0.7)',
+                        zIndex: 999,
+                    }}
+                />
+            )}
+
+            {/* Sidebar */}
+            <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
+                <div className="sidebar-logo">
+                    <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                        <div style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 'var(--radius-md)',
+                            background: 'var(--gradient-primary)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            color: 'var(--bg-primary)',
+                            fontSize: 12,
+                        }}>
+                            PS
+                        </div>
+                        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>Polyscreener</span>
+                    </Link>
+                </div>
+
+                <nav className="sidebar-nav">
+                    <div className="sidebar-section">Sectors</div>
                     {SECTORS.map(s => (
                         <button
                             key={s.id}
                             onClick={() => setSector(s.id)}
-                            className={`sidebar-nav-item ${sector === s.id ? 'active' : ''}`}
-                            style={{ width: '100%', border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer' }}
+                            className={`sidebar-item ${sector === s.id ? 'active' : ''}`}
                         >
-                            <span style={{ width: 20, textAlign: 'center' }}>{s.icon}</span>
+                            <span className="sidebar-item-icon">{s.icon}</span>
                             <span>{s.label}</span>
+                            {s.id === 'smart' && <span className="badge badge-success" style={{ marginLeft: 'auto' }}>{smartCount}</span>}
                         </button>
                     ))}
-                </div>
+                </nav>
 
-                {/* Market Pulse */}
-                <div style={{ marginTop: 'auto', padding: 16, borderTop: '1px solid var(--matrix-border)' }}>
-                    <div style={{ fontSize: 11, color: 'var(--matrix-text-muted)', letterSpacing: '0.1em', marginBottom: 8 }}>
-                        MARKET_PULSE
+                {/* Stats */}
+                <div style={{ padding: 'var(--space-5)', borderTop: '1px solid var(--border-subtle)' }}>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 'var(--space-2)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                        Total Volume
                     </div>
-                    <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--matrix-green)' }}>
-                        {(totalVolume / 1000000).toFixed(1)}M
+                    <div style={{ fontSize: 'var(--text-xl)', fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" }} className="text-gradient">
+                        ${(totalVolume / 1000000).toFixed(0)}M
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--matrix-text-muted)' }}>TOTAL_VOLUME</div>
                 </div>
             </aside>
 
-            {/* Main Content */}
-            <main style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                {/* Top Bar */}
-                <header style={{
-                    padding: '12px 24px',
-                    borderBottom: '1px solid var(--matrix-border)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    background: 'var(--matrix-bg-secondary)',
-                }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                        <span className="status-dot online" />
-                        <span style={{ fontSize: 12, color: 'var(--matrix-text-dim)' }}>
-                            LIVE FEED CONNECTED :: <LiveTime />
+            {/* Main */}
+            <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                {/* Header */}
+                <header className="header">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+                        <h1 style={{ fontSize: 'var(--text-lg)', fontWeight: 600 }}>
+                            {SECTORS.find(s => s.id === sector)?.icon} {SECTORS.find(s => s.id === sector)?.label}
+                        </h1>
+                        <span className="badge badge-success">
+                            <span className="status-dot online" style={{ width: 6, height: 6 }} />
+                            Live
                         </span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                         <input
                             type="text"
-                            placeholder="SEARCH_MARKET_DATABASE..."
+                            placeholder="Search markets..."
                             value={search}
                             onChange={e => setSearch(e.target.value)}
-                            className="matrix-input"
-                            style={{ width: 280 }}
+                            className="input font-mono"
+                            style={{ width: 260 }}
                         />
-                        <Link to="/leaderboard" className="matrix-btn">
-                            LEADERBOARD
+                        <Link to="/leaderboard" className="btn btn-secondary">
+                            🧠 Leaderboard
                         </Link>
                     </div>
                 </header>
 
-                {/* Section Header */}
-                <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--matrix-border)' }}>
-                    <h2 style={{
-                        fontSize: 18,
-                        fontWeight: 600,
-                        color: 'var(--matrix-green)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                    }}>
-                        <span style={{ color: 'var(--matrix-text-muted)' }}>&gt;</span>
-                        {SECTORS.find(s => s.id === sector)?.label.toUpperCase() || 'TRENDING'}
-                    </h2>
-                    <div style={{ fontSize: 12, color: 'var(--matrix-text-muted)', marginTop: 4 }}>
-                        MARKETS_LOADED: {filteredMarkets.length} •• SOCKET_STATUS: <span style={{ color: 'var(--matrix-green)' }}>ONLINE</span>
-                    </div>
-                </div>
-
-                {/* Markets Table */}
-                <div style={{ flex: 1, overflow: 'auto', padding: '0 24px 24px' }}>
+                {/* Table */}
+                <div style={{ flex: 1, overflow: 'auto', padding: 'var(--space-5)' }}>
                     {loading ? (
-                        <div style={{ padding: 60, textAlign: 'center', color: 'var(--matrix-text-dim)' }}>
-                            <div style={{ fontSize: 16 }}>LOADING_MARKETS...</div>
-                            <div style={{ fontSize: 12, marginTop: 8 }}>CONNECTING TO POLYMARKET API</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                            {[...Array(8)].map((_, i) => (
+                                <div key={i} className="skeleton" style={{ height: 72, borderRadius: 'var(--radius-md)' }} />
+                            ))}
                         </div>
                     ) : (
-                        <table className="matrix-table">
+                        <table className="table">
                             <thead>
                                 <tr>
-                                    <th style={{ width: 40 }}></th>
-                                    <th>MARKET CONTRACT</th>
-                                    <th style={{ textAlign: 'center' }}>TOP OUTCOME</th>
-                                    <th style={{ textAlign: 'right' }}>24H VOLUME</th>
-                                    <th style={{ textAlign: 'right' }}>END DATE</th>
-                                    <th style={{ textAlign: 'center' }}>DATA</th>
+                                    <th style={{ width: 40 }}>#</th>
+                                    <th>Market</th>
+                                    <th style={{ textAlign: 'center', width: 80 }}>Trend</th>
+                                    <th style={{ textAlign: 'center', width: 100 }}>Probability</th>
+                                    <th style={{ textAlign: 'right', width: 100 }}>24h Vol</th>
+                                    <th style={{ textAlign: 'center', width: 60 }}>🧠</th>
+                                    <th style={{ width: 80 }}></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredMarkets.map((market, i) => {
                                     const yesPrice = parsePrice(market.outcomePrices)
-                                    const topOutcome = yesPrice >= 50 ? 'Yes' : 'No'
-                                    const topProb = yesPrice >= 50 ? yesPrice : 100 - yesPrice
-                                    const endDate = market.endDate ? new Date(market.endDate).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) : '—'
-                                    const isFeatured = market.featured || Number(market.volume24hr) > 100000
+                                    // Generate sparkline data based on market id (deterministic)
+                                    const seed = (market.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+                                    const sparklineData = Array.from({ length: 12 }, (_, j) =>
+                                        30 + Math.sin(seed + j * 0.5) * 20 + (seed % 10)
+                                    )
 
                                     return (
-                                        <tr
-                                            key={market.id}
-                                            onClick={() => navigate(`/market/${market.slug || market.id}`)}
-                                            style={{ cursor: 'pointer' }}
-                                        >
-                                            <td>
-                                                <span style={{ color: market.smartCount > 0 ? 'var(--matrix-green)' : 'var(--matrix-text-muted)' }}>●</span>
+                                        <tr key={market.id} onClick={() => navigate(`/market/${market.slug || market.id}`)}>
+                                            <td style={{ color: 'var(--text-muted)', fontFamily: "'JetBrains Mono', monospace", fontSize: 'var(--text-xs)' }}>
+                                                {i + 1}
                                             </td>
                                             <td>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                                    <span style={{ fontWeight: 500 }}>{market.question}</span>
-                                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                        {isFeatured && <span className="matrix-badge featured">FEATURED</span>}
-                                                        <span style={{ fontSize: 11, color: 'var(--matrix-text-muted)' }}>
-                                                            ID: {(market.conditionId || market.id).slice(0, 10)}...
-                                                        </span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+                                                    {market.image && (
+                                                        <img
+                                                            src={market.image}
+                                                            alt=""
+                                                            style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', objectFit: 'cover' }}
+                                                            onError={e => (e.currentTarget.style.display = 'none')}
+                                                        />
+                                                    )}
+                                                    <div>
+                                                        <div style={{ fontWeight: 500, fontSize: 'var(--text-sm)', lineHeight: 1.3, maxWidth: 320 }} className="truncate">
+                                                            {market.question}
+                                                        </div>
+                                                        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', marginTop: 2 }}>
+                                                            {market.featured && <span className="badge badge-warning" style={{ padding: '2px 6px' }}>Featured</span>}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </td>
                                             <td style={{ textAlign: 'center' }}>
-                                                <span style={{
-                                                    color: topOutcome === 'Yes' ? 'var(--matrix-green)' : 'var(--matrix-red)',
+                                                <Sparkline data={sparklineData} height={20} />
+                                            </td>
+                                            <td style={{ textAlign: 'center' }}>
+                                                <div style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: 'var(--space-1)',
+                                                    padding: '4px 10px',
+                                                    background: yesPrice >= 50 ? 'rgba(0, 255, 159, 0.1)' : 'rgba(255, 71, 87, 0.1)',
+                                                    borderRadius: 'var(--radius-sm)',
                                                     fontWeight: 600,
+                                                    fontFamily: "'JetBrains Mono', monospace",
+                                                    fontSize: 'var(--text-xs)',
+                                                    color: yesPrice >= 50 ? 'var(--accent-primary)' : 'var(--accent-danger)',
                                                 }}>
-                                                    {topOutcome}
-                                                </span>
+                                                    {yesPrice >= 50 ? 'Y' : 'N'} {yesPrice >= 50 ? yesPrice.toFixed(0) : (100 - yesPrice).toFixed(0)}%
+                                                </div>
                                             </td>
-                                            <td style={{ textAlign: 'right', color: 'var(--matrix-green)', fontWeight: 500 }}>
+                                            <td style={{ textAlign: 'right', fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-accent)', fontSize: 'var(--text-sm)' }}>
                                                 {formatNumber(Number(market.volume24hr) || 0)}
-                                            </td>
-                                            <td style={{ textAlign: 'right', color: 'var(--matrix-amber)' }}>
-                                                {endDate}
                                             </td>
                                             <td style={{ textAlign: 'center' }}>
                                                 {market.smartCount > 0 ? (
-                                                    <span style={{
-                                                        display: 'inline-flex',
-                                                        alignItems: 'center',
-                                                        gap: 4,
-                                                        padding: '2px 8px',
-                                                        background: 'rgba(0, 255, 65, 0.1)',
-                                                        border: '1px solid var(--matrix-dark-green)',
-                                                        borderRadius: 2,
-                                                        fontSize: 11,
-                                                    }}>
-                                                        🧠 {market.smartCount}
-                                                    </span>
+                                                    <span className="badge badge-success" style={{ padding: '2px 8px' }}>{market.smartCount}</span>
                                                 ) : (
-                                                    <span style={{ color: 'var(--matrix-text-muted)' }}>—</span>
+                                                    <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>—</span>
                                                 )}
+                                            </td>
+                                            <td>
+                                                <button className="btn-quick" onClick={(e) => { e.stopPropagation(); navigate(`/market/${market.slug || market.id}`) }}>
+                                                    View →
+                                                </button>
                                             </td>
                                         </tr>
                                     )
@@ -333,6 +321,9 @@ export default function MarketsPage() {
                     )}
                 </div>
             </main>
+
+            {/* Axiom-style Status Bar */}
+            <StatusBar />
         </div>
     )
 }

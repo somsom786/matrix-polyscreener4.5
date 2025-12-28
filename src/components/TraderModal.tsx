@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { fetchUserPositions, type UserPosition } from '../services/polymarket'
 
 interface Trade {
     id: string
@@ -38,69 +39,10 @@ interface TraderData {
 interface TraderModalProps {
     isOpen: boolean
     onClose: () => void
-    trader: { address: string; username: string; pnl: number } | null
+    trader: { address: string; fullAddress?: string; username: string; pnl: number } | null
 }
 
 type TabType = 'positions' | 'history' | 'top100' | 'activity' | 'calendar'
-
-// Generate realistic demo data for a trader
-function generateTraderData(address: string, username: string): TraderData {
-    const markets = [
-        'Trump wins 2024?', 'Fed rate cut Jan?', 'BTC above $100k?',
-        'Russia ceasefire 2025?', 'Super Bowl Chiefs?', 'Solana above $200?',
-        'Xi steps down?', 'ETH flips BTC?', 'Tesla FSD launch?'
-    ]
-
-    // Generate positions
-    const positions: Position[] = Array.from({ length: 3 + Math.floor(Math.random() * 5) }, (_, i) => {
-        const avgPrice = 0.3 + Math.random() * 0.4
-        const currentPrice = avgPrice + (Math.random() - 0.5) * 0.3
-        const shares = 500 + Math.floor(Math.random() * 10000)
-        return {
-            id: `pos-${i}`,
-            market: markets[Math.floor(Math.random() * markets.length)],
-            outcome: Math.random() > 0.4 ? 'Yes' : 'No',
-            shares,
-            avgPrice,
-            currentPrice: Math.max(0.01, Math.min(0.99, currentPrice)),
-            unrealizedPnl: shares * (currentPrice - avgPrice),
-        }
-    })
-
-    // Generate trade history
-    const history: Trade[] = Array.from({ length: 50 }, (_, i) => {
-        const type = Math.random() > 0.5 ? 'buy' : 'sell'
-        const price = 0.2 + Math.random() * 0.6
-        const amount = 100 + Math.floor(Math.random() * 5000)
-        const pnlPercent = (Math.random() - 0.4) * 0.5 // Slightly positive bias
-        return {
-            id: `trade-${i}`,
-            market: markets[Math.floor(Math.random() * markets.length)],
-            type,
-            outcome: Math.random() > 0.4 ? 'Yes' : 'No',
-            amount,
-            price,
-            pnl: amount * pnlPercent,
-            timestamp: new Date(Date.now() - i * 3600000 * Math.random() * 24),
-        }
-    })
-
-    const totalUnrealized = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
-    const totalRealized = history.reduce((sum, t) => sum + t.pnl, 0)
-
-    return {
-        address,
-        username,
-        totalValue: 5000 + Math.random() * 50000,
-        unrealizedPnl: totalUnrealized,
-        realizedPnl: totalRealized,
-        availableBalance: 2000 + Math.random() * 20000,
-        totalTxns: 10000 + Math.floor(Math.random() * 50000),
-        positions,
-        history,
-        activity: history.slice(0, 20),
-    }
-}
 
 // Generate calendar PNL data
 function generateCalendarData(): { day: number; pnl: number }[] {
@@ -124,16 +66,66 @@ function formatPercent(n: number): string {
 export default function TraderModal({ isOpen, onClose, trader }: TraderModalProps) {
     const [activeTab, setActiveTab] = useState<TabType>('positions')
     const [calendarMonth] = useState('Dec 2025')
+    const [realPositions, setRealPositions] = useState<UserPosition[]>([])
+    const [loading, setLoading] = useState(false)
 
-    // Generate data based on trader
-    const data = useMemo(() => {
+    // Get the full address for links (fallback to address if fullAddress not provided)
+    const fullAddress = trader?.fullAddress || trader?.address || ''
+
+    // Fetch REAL positions from Polymarket API
+    useEffect(() => {
+        if (!isOpen || !fullAddress) {
+            setRealPositions([])
+            return
+        }
+
+        setLoading(true)
+        fetchUserPositions(fullAddress)
+            .then(positions => {
+                console.log(`Loaded ${positions.length} real positions for ${trader?.username}`)
+                setRealPositions(positions)
+            })
+            .catch(err => {
+                console.error('Failed to fetch positions:', err)
+                setRealPositions([])
+            })
+            .finally(() => setLoading(false))
+    }, [isOpen, fullAddress, trader?.username])
+
+    // Convert real positions to our display format
+    const data = useMemo((): TraderData | null => {
         if (!trader) return null
-        return generateTraderData(trader.address, trader.username)
-    }, [trader])
+
+        const positions: Position[] = realPositions.map((pos, i) => ({
+            id: `pos-${i}`,
+            market: pos.marketQuestion || `Market ${pos.conditionId?.slice(0, 8)}`,
+            outcome: pos.outcome === 'yes' ? 'Yes' : 'No',
+            shares: pos.shares,
+            avgPrice: pos.avgPrice / 100,
+            currentPrice: pos.currentPrice / 100,
+            unrealizedPnl: pos.unrealizedPnl,
+        }))
+
+        const totalUnrealized = positions.reduce((sum, p) => sum + p.unrealizedPnl, 0)
+        const totalValue = positions.reduce((sum, p) => sum + p.shares * p.currentPrice, 0) || trader.pnl * 0.3
+
+        return {
+            address: fullAddress,
+            username: trader.username,
+            totalValue,
+            unrealizedPnl: totalUnrealized,
+            realizedPnl: trader.pnl - totalUnrealized,
+            availableBalance: trader.pnl * 0.3,
+            totalTxns: 0, // Will be fetched later
+            positions,
+            history: [],
+            activity: [],
+        }
+    }, [trader, fullAddress, realPositions])
 
     const calendarData = useMemo(() => generateCalendarData(), [])
 
-    // Top 100 trades sorted by absolute PNL
+    // Top 100 trades (empty since we fetch real positions only)
     const top100 = useMemo(() => {
         if (!data) return []
         return [...data.history].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).slice(0, 100)
@@ -192,18 +184,20 @@ export default function TraderModal({ isOpen, onClose, trader }: TraderModalProp
                                 <div>
                                     <div style={{ fontWeight: 600, fontSize: 16 }}>{data.username}</div>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>{data.address}</span>
+                                        <span className="mono" style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                                            {trader?.address || `${fullAddress.slice(0, 6)}...${fullAddress.slice(-4)}`}
+                                        </span>
                                         <button
                                             onClick={async () => {
-                                                await navigator.clipboard.writeText(data.address)
+                                                await navigator.clipboard.writeText(fullAddress)
                                             }}
-                                            title="Copy address"
+                                            title="Copy full address"
                                             style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 4, padding: '2px 6px', cursor: 'pointer', fontSize: 10, color: 'var(--text-muted)' }}
                                         >
                                             📋
                                         </button>
                                         <a
-                                            href={`https://polymarket.com/profile/${data.address}`}
+                                            href={`https://polymarket.com/profile/${fullAddress}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
                                             title="View on Polymarket"

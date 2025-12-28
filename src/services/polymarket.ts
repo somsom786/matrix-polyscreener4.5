@@ -105,6 +105,26 @@ export interface Market {
     featured?: boolean
     conditionId?: string
     smartWalletCount?: number
+    // Multi-outcome support
+    groupSlug?: string  // If part of an event group
+    outcomeCount?: number  // Number of outcomes (2 = Yes/No, 3+ = multi)
+    outcomes?: string[]  // Outcome names for multi-outcome markets
+    eventId?: string  // Parent event ID
+}
+
+// Event (group of related markets)
+export interface PolyEvent {
+    id: string
+    title: string
+    slug: string
+    description?: string
+    category: string
+    image?: string
+    volume: number
+    liquidity: number
+    startDate?: string
+    endDate?: string
+    markets: Market[]  // Child markets (outcomes)
 }
 
 export interface Position {
@@ -132,6 +152,33 @@ export interface PnlData {
     totalPnl: string
     realizedPnl: string
     unrealizedPnl: string
+}
+
+// Extended position details for user profiles
+export interface UserPosition {
+    conditionId: string
+    market: string
+    outcome: 'yes' | 'no'
+    shares: number
+    avgPrice: number
+    currentPrice: number
+    value: number
+    unrealizedPnl: number
+    marketQuestion?: string
+    marketSlug?: string
+}
+
+// Trade/activity for a market
+export interface MarketTrade {
+    id: string
+    user: string
+    side: 'BUY' | 'SELL'
+    outcome: 'yes' | 'no'
+    shares: number
+    price: number
+    value: number
+    timestamp: number
+    username?: string
 }
 
 // GraphQL query helper (for Goldsky subgraphs)
@@ -262,6 +309,54 @@ export async function fetchMarkets(limit = 100, active = true): Promise<Market[]
     return data
 }
 
+// Fetch events (multi-outcome market groups) from Gamma API
+export async function fetchEvents(limit = 50, active = true): Promise<PolyEvent[]> {
+    console.log('Fetching multi-outcome events via Vite proxy...')
+
+    const params = new URLSearchParams({
+        limit: limit.toString(),
+        active: active.toString(),
+        closed: 'false',
+        order: 'volume',
+        ascending: 'false',
+    })
+
+    const url = `${GAMMA_API}/events?${params.toString()}`
+    console.log('Events API URL:', url)
+
+    try {
+        const response = await fetch(url)
+        if (!response.ok) {
+            console.warn(`Failed to fetch events: ${response.status}`)
+            return []
+        }
+
+        const data = await response.json()
+        console.log(`✅ Loaded ${data.length} events from Polymarket!`)
+
+        // Transform to our PolyEvent format and filter to multi-outcome only
+        return data
+            .filter((e: any) => e.markets && e.markets.length > 2) // Only multi-outcome (3+ choices)
+            .map((e: any) => ({
+                id: e.id,
+                title: e.title || e.question,
+                slug: e.slug,
+                description: e.description,
+                category: e.category,
+                image: e.image,
+                volume: e.volume || 0,
+                liquidity: e.liquidity || 0,
+                startDate: e.startDate,
+                endDate: e.endDate,
+                markets: e.markets || [],
+            }))
+    } catch (err) {
+        console.error('Failed to fetch events:', err)
+        return []
+    }
+}
+
+
 // Fetch single market details
 export async function fetchMarket(slug: string): Promise<Market | null> {
     console.log(`Fetching market: ${slug}`)
@@ -377,3 +472,125 @@ export async function fetchPnlLeaderboard(first = 100): Promise<PnlData[]> {
         return []
     }
 }
+
+// ===== NEW REAL DATA FUNCTIONS =====
+
+// Fetch REAL positions for a specific user address
+export async function fetchUserPositions(address: string): Promise<UserPosition[]> {
+    console.log(`Fetching real positions for: ${address}`)
+    try {
+        // Use Polymarket Data API for user positions - set higher threshold to avoid dust
+        const response = await fetch(`${DATA_API}/positions?user=${address}&sizeThreshold=10`)
+        if (!response.ok) {
+            console.warn(`Failed to fetch user positions: ${response.status}`)
+            return []
+        }
+        const data = await response.json()
+
+        if (!Array.isArray(data)) return []
+
+        // Transform API response to our UserPosition format
+        // Filter out dust positions - only show positions worth $100+
+        return data.map((pos: any) => ({
+            conditionId: pos.conditionId || pos.market || '',
+            market: pos.market || pos.conditionId || '',
+            outcome: pos.outcome?.toLowerCase() === 'yes' ? 'yes' : 'no',
+            shares: parseFloat(pos.size || pos.shares || '0'),
+            avgPrice: parseFloat(pos.avgPrice || pos.averagePrice || '0') * 100,
+            currentPrice: parseFloat(pos.curPrice || pos.currentPrice || pos.avgPrice || '0') * 100,
+            value: parseFloat(pos.value || '0'),
+            unrealizedPnl: parseFloat(pos.pnl || pos.unrealizedPnl || '0'),
+            marketQuestion: pos.title || pos.question || pos.marketTitle || '',
+            marketSlug: pos.slug || pos.marketSlug || '',
+        })).filter((pos: UserPosition) => pos.value >= 100)
+    } catch (err) {
+        console.error('Failed to fetch user positions:', err)
+        return []
+    }
+}
+
+// Fetch REAL trades for a specific market
+export async function fetchMarketTrades(conditionId: string, limit = 50): Promise<MarketTrade[]> {
+    console.log(`Fetching real trades for market: ${conditionId}`)
+    try {
+        // Use Polymarket Data API for market trades
+        const response = await fetch(`${DATA_API}/activity?market=${conditionId}&type=TRADE&limit=${limit}`)
+        if (!response.ok) {
+            console.warn(`Failed to fetch market trades: ${response.status}`)
+            return []
+        }
+        const data = await response.json()
+
+        if (!Array.isArray(data)) return []
+
+        // Build lookup for smart wallet usernames
+        const smartLookup = new Map(SMART_WALLETS.map(w => [w.address.toLowerCase(), w.username]))
+
+        return data.map((trade: any) => {
+            const userAddr = (trade.user || trade.maker || '').toLowerCase()
+            return {
+                id: trade.id || `${trade.user}-${trade.timestamp}`,
+                user: trade.user || trade.maker || '',
+                side: trade.side?.toUpperCase() === 'SELL' ? 'SELL' : 'BUY',
+                outcome: trade.outcome?.toLowerCase() === 'no' ? 'no' : 'yes',
+                shares: parseFloat(trade.size || trade.shares || trade.amount || '0'),
+                price: parseFloat(trade.price || '0') * 100,
+                value: parseFloat(trade.value || trade.usdcSize || '0'),
+                timestamp: parseInt(trade.timestamp || '0') * 1000,
+                username: smartLookup.get(userAddr) || undefined,
+            }
+        })
+    } catch (err) {
+        console.error('Failed to fetch market trades:', err)
+        return []
+    }
+}
+
+// Fetch ALL holders for a market (not just smart wallets)
+export async function fetchAllMarketHolders(conditionId: string, limit = 100): Promise<MarketHolder[]> {
+    console.log(`Fetching all holders for market: ${conditionId}`)
+    try {
+        // Use same /holders endpoint as fetchMarketHolders but don't set too high limit to avoid timeout
+        const response = await fetch(`${DATA_API}/holders?market=${conditionId}&limit=${limit}&minBalance=1`)
+        if (!response.ok) {
+            console.warn(`Failed to fetch all holders: ${response.status}, using fallback`)
+            // Fallback to existing function
+            return fetchMarketHolders(conditionId, limit)
+        }
+        const data = await response.json()
+
+        if (!Array.isArray(data)) return []
+
+        // Debug: log first holder to see structure
+        if (data.length > 0) {
+            console.log('Sample holder from API:', JSON.stringify(data[0]))
+        }
+
+        // Map and enrich with wallet names from SMART_WALLETS
+        const smartLookup = new Map(SMART_WALLETS.map(w => [w.address.toLowerCase(), w.username]))
+
+        return data.map((holder: any) => {
+            // The API might return outcome in different fields: outcome, asset, side
+            let outcome = 'yes'
+            if (holder.outcome) {
+                outcome = holder.outcome.toLowerCase().includes('yes') ? 'yes' : 'no'
+            } else if (holder.asset) {
+                // Asset might be like "Will X happen? Yes" or just "Yes"/"No"
+                outcome = String(holder.asset).toLowerCase().includes('yes') ? 'yes' : 'no'
+            }
+
+            return {
+                address: holder.address || holder.user || '',
+                balance: parseFloat(holder.balance || holder.size || holder.shares || '0'),
+                outcome,
+                pnl: parseFloat(holder.pnl || holder.unrealizedPnl || '0'),
+                avgPrice: parseFloat(holder.avgPrice || holder.averagePrice || '0'),
+                username: smartLookup.get((holder.address || holder.user || '').toLowerCase()),
+            }
+        }).filter((h: MarketHolder) => h.balance >= 1) // Filter dust
+    } catch (err) {
+        console.error('Failed to fetch all holders:', err)
+        return []
+    }
+}
+
