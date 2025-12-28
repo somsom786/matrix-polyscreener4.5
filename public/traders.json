@@ -1,0 +1,212 @@
+[
+    {
+        "rank": 1,
+        "username": "Ansel Fang",
+        "address": "0x17db3fcd93ba12d38382a0cade24b200185c5f6d",
+        "score": 36,
+        "pnl": 3183842.93
+    },
+    {
+        "rank": 2,
+        "username": "Domer",
+        "address": "0x9d84ce0306f8551e02efef1680475fc0f1dc1344",
+        "score": 58.7,
+        "pnl": 2574619.60
+    },
+    {
+        "rank": 3,
+        "username": "YatSen",
+        "address": "0x5bffcf561bcae83af680ad600cb99f1184d6ffbe",
+        "score": 64.1,
+        "pnl": 2290884.79
+    },
+    {
+        "rank": 4,
+        "username": "aenews",
+        "address": "0x44c1dfe43260c94ed4f1d00de2e1f80fb113ebc1",
+        "score": 79.8,
+        "pnl": 1772756.26
+    },
+    {
+        "rank": 5,
+        "username": "scottilicious",
+        "address": "0x000d257d2dc7616feaef4ae0f14600fdf50a758e",
+        "score": 87,
+        "pnl": 1337807.50
+    },
+    {
+        "rank": 6,
+        "username": "50Pence",
+        "address": "0x3cf3e8d5427aed066a7a5926980600f6c3cf87b3",
+        "score": 30.4,
+        "pnl": 1118075.50
+    },
+    {
+        "rank": 7,
+        "username": "debased",
+        "address": "0x24c8cf69a0e0a17eee21f69d29752bfa32e823e1",
+        "score": 84.4,
+        "pnl": 1115921.26
+    },
+    {
+        "rank": 8,
+        "username": "gopfan2",
+        "address": "0xf2f6af4f27ec2dcf4072095ab804016e14cd5817",
+        "score": 76.8,
+        "pnl": 1008375.33
+    },
+    {
+        "rank": 9,
+        "username": "Anjun",
+        "address": "0x43372356634781eea88d61bbdd7824cdce958882",
+        "score": 94.4,
+        "pnl": 966500.81
+    },
+    {
+        "rank": 10,
+        "username": "cigarettes",
+        "address": "0xd218e474776403a330142299f7796e8ba32eb5c9",
+        "score": 68.4,
+        "pnl": 934276.68
+    },
+    {
+        "rank": 11,
+        "username": "lostzemblan",
+        "address": "0x8795bcb2fe129d1ea3e3d73bc13a3d8078047544",
+        "score": 73.9,
+        "pnl": 832131.18
+    },
+    {
+        "rank": 12,
+        "username": "Dropper",
+        "address": "0x6bab41a0dc40d6dd4c1a915b8c01969479fd1292",
+        "score": 93.2,
+        "pnl": 802443.53
+    },
+    {
+        "rank": 13,
+        "username": "Car",
+        "address": "0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b",
+        "score": 96.2,
+        "pnl": 762023.24
+    },
+    {
+        "rank": 14,
+        "username": "chungguskhan",
+        "address": "0x7744bfd749a70020d16a1fcbac1d064761c9999e",
+        "score": 89.7,
+        "pnl": 735932.92
+    },
+    {
+        "rank": 15,
+        "username": "denizz",
+        "address": "0xbaa2bcb5439e985ce4ccf815b4700027d1b92c73",
+        "score": 56.1,
+        "pnl": 498796.95
+    },
+    {
+        "rank": 16,
+        "username": "EltonMa",
+        "address": "0xc8ab97a9089a9ff7e6ef0688e6e591a066946418",
+        "score": 41,
+        "pnl": 468740.53
+    },
+    {
+        "rank": 17,
+        "username": "Brokie",
+        "address": "0x1e1f17412069c0736adfaadf8ee7f46e5612c855",
+        "score": 77,
+        "pnl": 412763.88
+    },
+    {
+        "rank": 18,
+        "username": "Euan",
+        "address": "0xdd225a03cd7ed89e3931906c67c75ab31cf89ef1",
+        "score": 92.1,
+        "pnl": 358139.71
+    },
+    {
+        "rank": 19,
+        "username": "mombil",
+        "address": "0x68c24bf4a8ad4d79a6fe4b8eec6f93a02dfd1711",
+        "score": 73.7,
+        "pnl": 340047.07
+    },
+    {
+        "rank": 20,
+        "username": "jokerfucker",
+        "address": "0x68469ab9009f2783e243a1d0957f4cdd8939b797",
+        "score": 44.2,
+        "pnl": 339447.76
+    },
+    {
+        "rank": 21,
+        "username": "Decap",
+        "address": "0xe25b9180f5687aa85bd94ee309bb72a464320f1b",
+        "score": 45.7,
+        "pnl": 324041.20
+    },
+    {
+        "rank": 22,
+        "username": "player1.eth",
+        "address": "0xfb79181a9d9dcaceda40803c0aeb55f6c58ec2c6",
+        "score": 69.7,
+        "pnl": 311490.80
+    },
+    {
+        "rank": 23,
+        "username": "Rooke Brollins",
+        "address": "0x6ffb4354cbe6e0f9989e3b55564ec5fb8646a834",
+        "score": 86.2,
+        "pnl": 306052.74
+    },
+    {
+        "rank": 24,
+        "username": "betwick",
+        "address": "0xc851cd9bee7d262afd78674f861f9f576a12cd2a",
+        "score": 69,
+        "pnl": 303823.96
+    },
+    {
+        "rank": 25,
+        "username": "esports095",
+        "address": "0x40471b34671887546013ceb58740625c2efe7293",
+        "score": 72.8,
+        "pnl": 286349.99
+    },
+    {
+        "rank": 26,
+        "username": "FhantomBets",
+        "address": "0xecb14ac6e9ca447ce2f2912e6217b43d7b655da3",
+        "score": 46.3,
+        "pnl": 273747.79
+    },
+    {
+        "rank": 27,
+        "username": "Verrissimus",
+        "address": "0x9b979a065641e8cfde3022a30ed2d9415cf55e12",
+        "score": 84.1,
+        "pnl": 267327.74
+    },
+    {
+        "rank": 28,
+        "username": "Frosenn",
+        "address": "0x06ecb7e739f5455922ce57e83284f132c7f0f845",
+        "score": 77.9,
+        "pnl": 266594.43
+    },
+    {
+        "rank": 29,
+        "username": "ewww1",
+        "address": "0xed61f86bb5298d2f27c21c433ce58d80b88a9aa3",
+        "score": 85.2,
+        "pnl": 266379.09
+    },
+    {
+        "rank": 30,
+        "username": "Qualitative",
+        "address": "0x0f863d92dd2b960e3eb6a23a35fd92a91981404e",
+        "score": 88.3,
+        "pnl": 245599.63
+    }
+]
