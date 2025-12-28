@@ -47,7 +47,6 @@ export function TradingChart(props: ChartProps) {
                 const module = await import('lightweight-charts');
                 const createChart = module.createChart || module.default?.createChart;
                 const ColorType = module.ColorType || module.default?.ColorType;
-                const CandlestickSeries = module.CandlestickSeries || module.default?.CandlestickSeries;
 
                 if (!createChart) {
                     throw new Error('Could not find createChart in module');
@@ -100,7 +99,6 @@ export function TradingChart(props: ChartProps) {
                 chartRef.current = chart;
                 chartApi = chart;
 
-                let candlestickSeries;
                 const seriesOptions = {
                     upColor: '#22c55e',
                     downColor: '#ef4444',
@@ -109,22 +107,17 @@ export function TradingChart(props: ChartProps) {
                     wickDownColor: '#ef4444',
                     // Price format as percentage
                     priceFormat: {
-                        type: 'custom',
+                        type: 'custom' as const,
                         formatter: (price: number) => `${(price * 100).toFixed(1)}%`,
                         minMove: 0.001,
                     },
                 };
 
-                // Check for v4 API
-                if (typeof chart.addCandlestickSeries === 'function') {
-                    candlestickSeries = chart.addCandlestickSeries(seriesOptions);
+                // Use v4 API (addCandlestickSeries)
+                if (typeof chart.addCandlestickSeries !== 'function') {
+                    throw new Error('Chart API incompatibility: addCandlestickSeries not found');
                 }
-                // Check for v5 API
-                else if (typeof chart.addSeries === 'function' && CandlestickSeries) {
-                    candlestickSeries = chart.addSeries(CandlestickSeries, seriesOptions);
-                } else {
-                    throw new Error('Chart API incompatibility: Could not add candlestick series.');
-                }
+                const candlestickSeries = chart.addCandlestickSeries(seriesOptions);
 
                 candlestickSeriesRef.current = candlestickSeries;
 
@@ -148,19 +141,19 @@ export function TradingChart(props: ChartProps) {
                     const sortedData = [...data]
                         .sort((a, b) => a.time - b.time)
                         .map(d => ({
-                            time: d.time,
+                            time: d.time as any,
                             open: Math.max(0, Math.min(1, d.open)),
                             high: Math.max(0, Math.min(1, d.high)),
                             low: Math.max(0, Math.min(1, d.low)),
                             close: Math.max(0, Math.min(1, d.close)),
                         }));
-                    candlestickSeries.setData(sortedData);
+                    candlestickSeries.setData(sortedData as any);
                     chart.timeScale().fitContent();
                 }
 
                 // Initial markers
                 if (markers.length > 0) {
-                    candlestickSeries.setMarkers(markers);
+                    candlestickSeries.setMarkers(markers as any);
                 }
 
             } catch (err: any) {
@@ -198,13 +191,13 @@ export function TradingChart(props: ChartProps) {
             const sortedData = [...data]
                 .sort((a, b) => a.time - b.time)
                 .map(d => ({
-                    time: d.time,
+                    time: d.time as any,
                     open: Math.max(0, Math.min(1, d.open)),
                     high: Math.max(0, Math.min(1, d.high)),
                     low: Math.max(0, Math.min(1, d.low)),
                     close: Math.max(0, Math.min(1, d.close)),
                 }));
-            candlestickSeriesRef.current.setData(sortedData);
+            candlestickSeriesRef.current.setData(sortedData as any);
 
             // Fit content to show all data
             if (chartRef.current) {
@@ -216,7 +209,7 @@ export function TradingChart(props: ChartProps) {
     // Update markers effect
     useEffect(() => {
         if (candlestickSeriesRef.current && markers.length > 0) {
-            candlestickSeriesRef.current.setMarkers(markers);
+            candlestickSeriesRef.current.setMarkers(markers as any);
         }
     }, [markers]);
 

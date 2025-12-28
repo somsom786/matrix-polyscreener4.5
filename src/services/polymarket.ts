@@ -674,7 +674,6 @@ export async function fetchAllMarketHolders(conditionId: string, limit = 100): P
                         balance: parseFloat(holder.amount || holder.balance || holder.size || '0'),
                         outcome: outcome as 'yes' | 'no',
                         pnl: parseFloat(holder.pnl || holder.unrealizedPnl || holder.return || '0'),
-                        avgPrice: parseFloat(holder.avgPrice || holder.averagePrice || '0'),
                         username: smartName || apiName,
                     })
                 })

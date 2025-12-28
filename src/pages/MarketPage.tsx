@@ -662,14 +662,8 @@ export default function MarketPage() {
                                     const smartWallet = SMART_WALLETS.find(sw => sw.address.toLowerCase() === holder.address.toLowerCase())
                                     const isPinned = pinnedWallet && holder.address.toLowerCase() === pinnedWallet.toLowerCase()
 
-                                    // Calculate PnL if missing (API often returns 0 for pnl but provides avgPrice)
-                                    let pnl = holder.pnl || 0
-                                    if (pnl === 0 && holder.avgPrice > 0) {
-                                        const currentPrice = holder.outcome === 'yes' ? yesPrice : noPrice
-                                        // avgPrice is usually 0-1 from API, currentPrice is 0-100
-                                        const entryPrice = holder.avgPrice <= 1 ? holder.avgPrice * 100 : holder.avgPrice
-                                        pnl = (currentPrice - entryPrice) / 100 * holder.balance
-                                    }
+                                    // Use PnL from API
+                                    const pnl = holder.pnl || 0
 
                                     return (
                                         <tr key={holder.address}
