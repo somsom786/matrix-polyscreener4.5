@@ -1,6 +1,9 @@
 # vercel link: 
 https://polyscreener-dashboard-qechzn70e-somsoms-projects.vercel.app/
 
+<img width="2493" height="1219" alt="image" src="https://github.com/user-attachments/assets/86625e33-e6ca-4a3d-bc7f-699a53d08cec" />
+
+
 # React + TypeScript + Vite
 
 
